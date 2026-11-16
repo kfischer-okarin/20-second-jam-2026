@@ -2,6 +2,28 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## The engine
+
+Everything is drawn as SDF models baked into gaussian splats, rendered at 320×180 and post-processed into a 32 color pixel palette.
+
+- `mygame/app/render/`: SDF baking, splat drawing, lighting, particles, camera juice (shake, hit-stop, flashes, shockwaves), the render target chain behind the post shader (`mygame/shaders/`), the pixel font, frame timings
+- `mygame/app/sfx.rb` plays the sounds in `mygame/sounds/`. They are generated: change and run `scripts/generate-sounds`, never edit `mygame/sounds/*.wav`
+- `mygame/app/game.rb`: the game. Until there is one, a demo scene: a glowing mushroom at dusk, and a burst of spores wherever the player clicks. A game replaces it and `game_cli.rb`; `main.rb` only needs `Game.current`, `Game#tick(args)` and `Game#post`.
+- The look is the game's: it passes its light to `Lighting`, its color ramps to `Particles` and its background color and grading to `PostProcess`. The palette is `PALETTE` in `mygame/shaders/post.frag.hlsl`.
+- Positions are scene pixels: 320×180, y up. The window shows them 4× larger.
+
+Seeing changes:
+
+- Saving a game file restarts the game and bakes the models again; shader files recompile without a restart
+- `scripts/game reset <setup>` with the setups in `mygame/app/game_cli.rb`: the demo's `autopilot` sets off bursts by itself
+- F1 in the game, or `scripts/game eval 'Game.current.post.debug_view = :rt_glow'`, shows a single render target until set back to `:rt_final`
+- `scripts/game state` reports `update_ms`, `draw_ms`, `splats`, `frame_ms` and `peak_ms`
+
+Read first:
+
+- `guides/rendering.md` before changing how anything looks: colors, models, lighting, particles, render layers, shaders, post-processing
+- `guides/performance.md` before writing code that runs per splat or per particle, and when the frame rate drops
+
 ## Development commands
 
 ```sh
