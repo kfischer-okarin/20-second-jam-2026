@@ -65,16 +65,3 @@ The top-level constants `Mat2`-`Mat4`, `Vec2`-`Vec4`, `Matrix`, `Geometry`, `Eas
 ## Render targets, blending and shaders
 
 Read `guides/dragonruby-rendering.md` before drawing into render targets, combining blend modes, writing shaders, or drawing thousands of sprites per frame.
-
-## Maintaining this template
-
-This section only applies to the template repository itself, `kfischer-okarin/dragonruby-template`, checked out in a folder named `dragonruby-template`. Games created from the template start with a copy of this file: if you are in any other repository or folder, you are in a game, so delete this section.
-
-Tools for maintaining the template live on the orphan `maintenance` branch, so they do not come along into new games. After a DragonRuby update, run the Ruby support probe against the new release without checking the branch out:
-
-```sh
-git fetch origin maintenance
-git show origin/maintenance:probe-ruby-support | bash -s -- <path to the DragonRuby release>
-```
-
-Then update "Ruby that DragonRuby supports" above and the disabled cops and `TargetRubyVersion` in `.rubocop.yml` to match.
