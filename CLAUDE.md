@@ -2,20 +2,21 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## The engine
+## The game
 
-Everything is drawn as SDF models baked into gaussian splats, rendered at 320×180 and post-processed into a 32 color pixel palette.
+A 20-second arcade round: a turret on the rim of a planet that explodes when the clock runs out fights off invaders, and every invader that lands takes a second off the clock. Everything is drawn as SDF models baked into gaussian splats, rendered at 320×180 and post-processed into a 32 color pixel palette.
 
-- `mygame/app/render/`: SDF baking, splat drawing, lighting, particles, camera juice (shake, hit-stop, flashes, shockwaves), the render target chain behind the post shader (`mygame/shaders/`), the pixel font, frame timings
-- `mygame/app/sfx.rb` plays the sounds in `mygame/sounds/`. They are generated: change and run `scripts/generate-sounds`, never edit `mygame/sounds/*.wav`
-- `mygame/app/game.rb`: the game. Until there is one, a demo scene: a glowing mushroom at dusk, and a burst of spores wherever the player clicks. A game replaces it and `game_cli.rb`; `main.rb` only needs `Game.current`, `Game#tick(args)` and `Game#post`.
-- The look is the game's: it passes its light to `Lighting`, its color ramps to `Particles` and its background color and grading to `PostProcess`. The palette is `PALETTE` in `mygame/shaders/post.frag.hlsl`.
-- Positions are scene pixels: 320×180, y up. The window shows them 4× larger.
+- `mygame/app/render/` and `mygame/app/sfx.rb`: the engine, which this game is built on: SDF baking, splat drawing, lighting, particles, camera juice (shake, hit-stop, flashes, shockwaves), the render target chain behind the post shader (`mygame/shaders/`), the pixel font, frame timings, sound playback. It lives on the `engine` branch, without the game; changes that any game could use belong there.
+- `mygame/app/world/`: planet, turret, invaders, spawner, scoring, effects, HUD
+- `mygame/app/game.rb`: the round's flow (intro, playing, finale, results), what kills and impacts set off, and the game's light and grading
+- Tuning lives in data: `Invaders::TYPES` (a new kind of invader is an entry there, unless it brings new behavior such as splitting when killed, which goes into `Game#kill`), the `Spawner` schedules, the constants at the top of `Game`
+- Positions are scene pixels: 320×180, y up, the planet's center at 160, 90. The window shows them 4× larger.
+- Sounds are generated: change and run `scripts/generate-sounds`, never edit `mygame/sounds/*.wav`
 
 Seeing changes:
 
-- Saving a game file restarts the game and bakes the models again; shader files recompile without a restart
-- `scripts/game reset <setup>` with the setups in `mygame/app/game_cli.rb`: the demo's `autopilot` sets off bursts by itself
+- Saving a game file restarts the game from its intro and bakes the models again (about a second); shader files recompile without a restart
+- `scripts/game reset <setup>` with the setups in `mygame/app/game_cli.rb`: `autopilot` plays a round by itself (`scripts/game press` cannot hold fire), `doom` starts 6 seconds before the end, `finale` just before the explosion
 - F1 in the game, or `scripts/game eval 'Game.current.post.debug_view = :rt_glow'`, shows a single render target until set back to `:rt_final`
 - `scripts/game state` reports `update_ms`, `draw_ms`, `splats`, `frame_ms` and `peak_ms`
 
@@ -65,8 +66,8 @@ DragonRuby's shaders do not run in its web builds, so `web/` builds the game for
 
 ```sh
 web/build   # web/dist/index.html and the zip to upload to itch.io
-web/serve   # http://localhost:8000; ?setup=autopilot (or another GameCli setup) like scripts/game reset
-web/check   # plays the autopilot setup in headless Chrome and fails on errors (npm install in web/ once)
+web/serve   # http://localhost:8000; ?setup=autopilot (doom, finale, playing) like scripts/game reset
+web/check   # plays a round of autopilot in headless Chrome and fails on errors (npm install in web/ once)
 ```
 
 - A game change needs nothing web-specific unless it uses a part of DragonRuby's API that the runtime lacks. The page then shows a `NotImplementedError` naming it, and it goes into `web/runtime/dragonruby.rb` (plus `host.js` and `main.c` for new kinds of drawing, sound or input).

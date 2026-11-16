@@ -1,6 +1,6 @@
 # Performance
 
-A frame has 16.7 ms at 60 fps, and mruby leaves little headroom: a few thousand splats on screen fit when code that runs per splat follows the rules below.
+The game runs at 60 fps with about 3,000 splats on screen, but mruby leaves little headroom: per-splat code has to follow the rules below.
 
 ## Measuring
 
@@ -10,6 +10,15 @@ A frame has 16.7 ms at 60 fps, and mruby leaves little headroom: a few thousand 
 - `draw_ms` and `splats`: the engine drawing the previous frame's splats, which happens after the tick
 - `frame_ms`: time between ticks; above 16.7 the game is dropping frames
 - `peak_ms`: the slowest recent `update_ms + draw_ms`, decaying over a few seconds
+
+Typical numbers:
+
+| Moment | update_ms | draw_ms | splats |
+|---|---|---|---|
+| A busy round (`scripts/game reset autopilot`) | 5 to 7 | about 1 | 2,800 |
+| The finale (`scripts/game reset finale`) | about 7 | about 1 | 3,400 |
+
+The frame that shatters the planet takes about 16 ms, hidden by the freeze that starts there.
 
 Not measured:
 - drawing the HUD's Hash sprites (6 per character with its outline)
@@ -38,7 +47,7 @@ Measured on this machine:
 
 ## Rules for code that runs per splat or per particle
 
-They matter for loops over hundreds of elements (model splats, particles). A few dozen `SplatBatch#add` calls, like a background or bullets make, cost nothing worth saving.
+They matter for loops over hundreds of elements (model splats, particles). A few dozen `SplatBatch#add` calls, like the background, bullets and rings make, cost nothing worth saving.
 
 - **Loop:** `while` with an index over parallel arrays (`SplatModel`, `Particles`), with everything the loop reads copied into locals first.
 - **Write:** directly into `batch.data` (`SplatBatch::STRIDE` numbers per splat) and set `batch.count` at the end, instead of calling `add` per splat.
@@ -47,5 +56,8 @@ They matter for loops over hundreds of elements (model splats, particles). A few
 
 ## What already keeps the frame cheap
 
-- **Baking:** models are baked once (`ModelCache` keeps them until code changes); never bake during play.
-- **Point lights:** `Lighting#points_near` skips lights that cannot reach a model, and a light added with `except:` skips that receiver altogether.
+- **Planet rock:** half of it is rebuilt each frame, alternating (it turns too slowly for the stale half to show). Anything that forces a full rebuild every frame (`@rebuild_all`) doubles its cost.
+- **Planet core:** drawn only under plates that have broken off.
+- **Baking:** models are baked once (about 1 s at the first start, 0.25 s when the game restarts; `ModelCache` keeps them until code changes); never bake during play.
+- **Point lights:** `Lighting#points_near` skips lights that cannot reach a model. The core's light, added with `except: :planet`, skips the planet's 1,250 visible crust splats.
+- **Kills:** a kill turns every second splat of the invader into a particle, so chain kills in the finale are the heaviest particle load.

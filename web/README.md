@@ -21,8 +21,7 @@ web/serve    # serves web/dist at http://localhost:8000 (another port as the fir
 - The first build downloads mruby and compiles it into `web/.cache` (about a minute); after that a build takes a few
   seconds.
 - The page starts with "Click to play": browsers only allow sound after a click.
-- Add `?setup=autopilot` (or another setup from `mygame/app/game_cli.rb`) to the URL to start like
-  `scripts/game reset <setup>`.
+- Add `?setup=autopilot` (or `doom`, `finale`, `playing`) to the URL to start like `scripts/game reset <setup>`.
 - In the browser console:
   - `dr.eval('GameCli.state')` evaluates Ruby in the game and returns the inspected result
   - `dr.pause()`, `dr.step(10)` and `dr.resume()` stop the ticks, run some, and let them run again
@@ -30,12 +29,12 @@ web/serve    # serves web/dist at http://localhost:8000 (another port as the fir
 
 ## Checking the web build
 
-`web/check` plays the autopilot setup in headless Chrome, prints `GameCli.state` every 2 seconds, and fails when the
+`web/check` plays a round of autopilot in headless Chrome, prints `GameCli.state` every 2 seconds, and fails when the
 page reports an error or the game stops ticking. Run it after `web/build` whenever changes came over from DragonRuby.
 
 ```sh
-web/check                # autopilot for 10 seconds
-web/check autopilot 60   # a setup, for another number of seconds
+web/check                # autopilot for 35 seconds, through the finale to the results
+web/check finale 10      # another setup, for another number of seconds
 ```
 
 It needs Node (from `mise.toml`) and, once, `npm install` in `web/` for Playwright. It drives the installed Google
@@ -93,16 +92,16 @@ sources in its `docs/oss`:
 - **Sound:** a new Hash under a key of `args.audio` starts a sound, changing its `gain`, `pitch` or `paused` changes it,
   removing it stops it, and a finished sound disappears from `args.audio`.
 
-On the same frame (see below), the final image differs from DragonRuby's in a small fraction of its pixels (about
-0.05% in a game measured this way). WebAssembly's math library (musl) and Apple's
+On the same frame (the intro after 300 ticks, see below), the final image differs from DragonRuby's in about 0.05% of
+its pixels. WebAssembly's math library (musl) and Apple's
 disagree in the last bit for a few percent of `Math.sin`, `cos` and `atan2` results and for most of `**` with a
 fractional exponent, which now and then moves a truncated color by one step, and occasionally the dithering to the
 next palette color.
 
 To compare the two yourself, run the same Ruby in both games (`scripts/game eval` and `dr.eval`), for example
-`Game.current = Game.new($args); 300.times { Game.current.send(:update, 1.0 / 60, $args.inputs) };
-Game.current.define_singleton_method(:update) { |*_| nil }` for the demo scene, which freezes both on the same frame,
-then take screenshots of a 1280×720 window.
+`Game.current = Game.new($args); 300.times { Game.current.send(:update, 1.0 / 60, { fire: false, confirm: false,
+pointer: [100.0, 140.0] }) }; Game.current.define_singleton_method(:update) { |*_| nil }`, which freezes both on the
+same frame, then take screenshots of a 1280×720 window.
 
 ## Differences from DragonRuby
 
