@@ -1,0 +1,86 @@
+#!/usr/bin/env ruby
+# Synthesizes the game's sound effects into mygame/sounds/*.wav (mono, 16 bit, 44.1 kHz).
+# Deterministic: running it again produces the same files.
+
+require 'fileutils'
+
+RATE = 44_100
+OUTPUT_DIR = File.expand_path('../mygame/sounds', __dir__)
+
+def main
+  FileUtils.mkdir_p(OUTPUT_DIR)
+  sounds.each do |name, samples|
+    path = File.join(OUTPUT_DIR, "#{name}.wav")
+    write_wav(path, normalize(samples))
+    puts "#{path} (#{(samples.length.to_f / RATE).round(2)}s)"
+  end
+end
+
+def sounds
+  { pop: pop }
+end
+
+# --- Sounds -----------------------------------------------------------------------------------------------
+
+# A burst: noise through a closing lowpass, over a short sine thump that drops in pitch
+def pop
+  noise = noise_source(1)
+  filter = lowpass
+  phase = 0.0
+  samples(0.35) do |t|
+    progress = t / 0.35
+    phase += exp_sweep(180.0, 60.0, progress) / RATE
+    thump = Math.sin(2 * Math::PI * phase) * Math.exp(-t * 18)
+    hiss = filter.call(noise.call, (0.6 * ((1 - progress)**2)) + 0.03)
+    saturate((thump + (hiss * 1.6)) * Math.exp(-t * 9), 1.4)
+  end
+end
+
+# --- Building blocks ----------------------------------------------------------------------------------------
+
+def samples(seconds, &block)
+  Array.new((seconds * RATE).round) { |i| block.call(i.to_f / RATE) }
+end
+
+def noise_source(seed)
+  random = Random.new(seed)
+  -> { (random.rand * 2.0) - 1.0 }
+end
+
+# One-pole lowpass; amount is the per-sample smoothing factor between 0 and 1
+def lowpass
+  state = 0.0
+  ->(input, amount) { state += (input - state) * amount.clamp(0.0, 1.0) }
+end
+
+def exp_sweep(start, finish, progress)
+  start * ((finish / start)**progress.clamp(0.0, 1.0))
+end
+
+def square(phase)
+  (phase % 1.0) < 0.5 ? 1.0 : -1.0
+end
+
+def saw(phase)
+  ((phase % 1.0) * 2.0) - 1.0
+end
+
+def saturate(value, drive)
+  Math.tanh(value * drive) / Math.tanh(drive)
+end
+
+def normalize(samples, peak: 0.9)
+  loudest = samples.map(&:abs).max
+  return samples if loudest.zero?
+
+  samples.map { |sample| sample / loudest * peak }
+end
+
+def write_wav(path, samples)
+  data = samples.map { |sample| (sample.clamp(-1.0, 1.0) * 32_767).round }.pack('s<*')
+  header = ['RIFF', 36 + data.bytesize, 'WAVE', 'fmt ', 16, 1, 1, RATE, RATE * 2, 2, 16, 'data', data.bytesize]
+           .pack('a4L<a4a4L<S<S<L<L<S<S<a4L<')
+  File.binwrite(path, header + data)
+end
+
+main

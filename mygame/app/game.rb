@@ -1,7 +1,7 @@
 # A small scene that shows the engine at work, as the starting point for a game: a glowing mushroom, an SDF model
 # baked into splats, turns in the last light of the day among fireflies, and wherever the player clicks, a burst
-# of spores goes off with a shake, a flash and a shockwave. main.rb needs Game.current, #tick and #post from
-# whatever replaces it.
+# of spores goes off with a shake, a flash, a shockwave and a sound. main.rb needs Game.current, #tick and #post
+# from whatever replaces it.
 class Game
   CENTER_X = 160.0
   CENTER_Y = 80.0
@@ -56,6 +56,7 @@ class Game
     @post = PostProcess.new
     @post.background_color = [58, 68, 102]
     @frame_stats = FrameStats.new
+    @sfx = Sfx.new(%i[pop])
     @model = Game.model
     @model_batch = SplatBatch.new(:solid)
     @background = background_batch
@@ -73,6 +74,7 @@ class Game
 
   def tick(args)
     @frame_stats.measure do
+      @audio = args.audio
       dt = 1.0 / 60
       @camera.update(dt)
       update(dt * @camera.time_scale, args.inputs) unless @camera.frozen?
@@ -133,6 +135,7 @@ class Game
     @camera.flash!([0.8, 1.0, 0.7], 0.3)
     @camera.aberrate(2.0)
     @camera.shockwave(x, y, speed: 120.0, strength: 2.5, life: 0.5)
+    @sfx.play(@audio, :pop, gain: 0.6, pitch: 0.9 + (rand * 0.2))
   end
 
   def render(outputs)

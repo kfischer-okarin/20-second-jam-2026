@@ -17,6 +17,7 @@ require 'app/render/camera'
 require 'app/render/post_process'
 require 'app/render/frame_stats'
 require 'app/render/particles'
+require 'app/sfx'
 require 'app/game'
 require 'app/game_cli'
 
