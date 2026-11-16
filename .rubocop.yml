@@ -103,3 +103,15 @@ Style/ModuleFunction:
 # Not implemented in mruby
 Style/RandomWithOffset:
   Enabled: false
+
+# --- Web runtime ---
+
+# web/runtime/dragonruby.rb is DragonRuby's API reimplemented in the one file main.c loads, under DragonRuby's
+# method names (keyboard.left answers true or nil, require true or false)
+Naming/PredicateMethod:
+  Exclude:
+    - web/runtime/dragonruby.rb
+
+Style/OneClassPerFile:
+  Exclude:
+    - web/runtime/dragonruby.rb

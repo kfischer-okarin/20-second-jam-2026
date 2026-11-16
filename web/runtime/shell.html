@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>__GAME_TITLE__</title>
+  <link rel="icon" href="data:,">
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+    canvas { display: block; width: 100vw; height: 100vh; outline: none; touch-action: none; }
+    #start {
+      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+      color: #c0cbdc; font: 24px monospace; background: rgba(0, 0, 0, 0.6); cursor: wait;
+    }
+    #start.ready { cursor: pointer; }
+    #start .ready, #start.ready .loading { display: none; }
+    #start.ready .ready { display: inline; }
+    #error {
+      position: fixed; inset: 0; margin: 0; padding: 24px; overflow: auto; color: #ff0044;
+      background: rgba(24, 20, 37, 0.92); font: 14px monospace; white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas" tabindex="0"></canvas>
+  <div id="start"><span class="loading">Loading…</span><span class="ready">Click to play</span></div>
+  <pre id="error" hidden></pre>
+  <script>
+    var Module = { canvas: document.getElementById('canvas') };
+  </script>
+  {{{ SCRIPT }}}
+</body>
+</html>
