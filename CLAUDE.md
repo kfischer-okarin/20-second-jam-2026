@@ -59,6 +59,21 @@ scripts/game stop
 - Wait on game state with `wait-until`, never with `sleep`.
 - A game can define a top-level `GameCli` module with `self.state` (a Hash added to `state`) and `self.setup(name)` (named starting points for `reset`). See README.md.
 
+## Web build
+
+DragonRuby's shaders do not run in its web builds, so `web/` builds the game for browsers (and itch.io) on a runtime of its own: `mygame/` runs unchanged on mruby compiled to WebAssembly, with DragonRuby's API as far as the game uses it, drawing with WebGL2; the HLSL shaders are compiled to WebGL's GLSL. `web/README.md` has the details.
+
+```sh
+web/build   # web/dist/index.html and the zip to upload to itch.io
+web/serve   # http://localhost:8000; ?setup=autopilot (or another GameCli setup) like scripts/game reset
+web/check   # plays the autopilot setup in headless Chrome and fails on errors (npm install in web/ once)
+```
+
+- A game change needs nothing web-specific unless it uses a part of DragonRuby's API that the runtime lacks. The page then shows a `NotImplementedError` naming it, and it goes into `web/runtime/dragonruby.rb` (plus `host.js` and `main.c` for new kinds of drawing, sound or input).
+- The runtime's mruby 4.0 has no `it` block parameter (`_1` works). Game code that uses `it` breaks the web build until the runtime gets it.
+- The runtime imitates measured engine behavior (render target order, blend modes, shaders, color truncation, inputs, audio). When DragonRuby turns out to behave differently, change the runtime and the list in `web/README.md`.
+- In the browser console, `dr.eval('GameCli.state')` evaluates Ruby in the game like `scripts/game eval`.
+
 ## Testing
 
 `mygame/tests.rb` loads every file under `mygame/tests/` except `test_helper.rb`. Test files start with `require 'tests/test_helper'`.

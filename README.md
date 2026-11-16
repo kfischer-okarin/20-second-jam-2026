@@ -17,6 +17,10 @@
    to keep anything make sure that you backup those files first
 2. Copy the new version of the DragonRuby engine into your game repository (don't forget the hidden `.dragonruby` folder)
 
+## How to build the web version
+`web/build` builds the game for browsers into `web/dist`, including a zip to upload to itch.io, and `web/serve` serves
+it at http://localhost:8000. It needs `brew install emscripten glslang spirv-cross`. See `web/README.md`.
+
 ## How to drive the running game from the shell
 `scripts/game` starts its own instance of the game and controls it through the development web server (the port comes
 from `webserver.port` in `mygame/metadata/cvars.txt`). Run it without arguments for the full list of commands.
