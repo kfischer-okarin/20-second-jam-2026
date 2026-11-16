@@ -1,0 +1,194 @@
+diff -ru a/mrbgems/mruby-compiler/core/codegen.c b/mrbgems/mruby-compiler/core/codegen.c
+--- a/mrbgems/mruby-compiler/core/codegen.c	2026-11-16 19:21:48
++++ b/mrbgems/mruby-compiler/core/codegen.c	2026-11-16 19:26:23
+@@ -1527,9 +1527,8 @@
+       if (mrb_int_mul_overflow(n0, n, &n)) goto normal;
+     }
+     else { /* OP_DIV */
+-      if (n == 0) goto normal;
+-      if (n0 == MRB_INT_MIN && n == -1) goto normal;
+-      n = mrb_div_int(n0, n);
++      /* Like DragonRuby: Integer / Integer gives a Float at run time, so it is never folded into an Integer */
++      goto normal;
+     }
+     s->pc = addr_pc(s, data0.addr);
+     gen_int(s, dst, n);
+@@ -2176,6 +2175,48 @@
+ }
+ 
+ /*
++ * Like DragonRuby, which has no bigint: an integer literal beyond 32 bits loads as an Integer when it fits into
++ * mrb_int. (The parser turns every such literal into a bigint, which raises a RangeError without mruby-bigint.)
++ */
++static mrb_bool
++read_mrb_int(const char *p, int base, mrb_bool neg, mrb_int *result)
++{
++  uint64_t limit = neg ? (uint64_t)MRB_INT_MAX + 1 : (uint64_t)MRB_INT_MAX;
++  uint64_t value = 0;
++
++  if (*p == '+') p++;
++  for (; *p; p++) {
++    int n;
++    char c = *p;
++
++    if (c == '_') continue;
++    if (c >= '0' && c <= '9') n = c - '0';
++    else if (c >= 'a' && c <= 'f') n = c - 'a' + 10;
++    else if (c >= 'A' && c <= 'F') n = c - 'A' + 10;
++    else return FALSE;
++    if (n >= base) return FALSE;
++    if (value > (limit - n) / base) return FALSE;
++    value = value * base + n;
++  }
++  *result = neg ? (mrb_int)(0 - value) : (mrb_int)value;
++  return TRUE;
++}
++
++static void
++gen_bigint_literal(codegen_scope *s, const char *str, int base, mrb_bool neg)
++{
++  mrb_int i;
++
++  if (read_mrb_int(str, base, neg, &i)) {
++    gen_int(s, cursp(), i);
++  }
++  else {
++    /* Negate base to indicate negative number */
++    genop_2(s, OP_LOADL, cursp(), new_litbint(s, str, neg ? -base : base));
++  }
++}
++
++/*
+  * Generates code for a unary operation specified by `sym`, operating on the
+  * value in register `dst`, and storing the result back into `dst`.
+  *
+@@ -3587,6 +3628,10 @@
+     else if (sym == MRB_OPSYM(aref)) opt_op = OP_GETIDX;
+     else if (sym == MRB_OPSYM(aset)) opt_op = OP_SETIDX;
+   }
++  else if (sym == MRB_OPSYM(div)) {
++    /* Like DragonRuby, where Integer / Integer gives a Float in eval too (OP_DIV does, Integer#/ does not) */
++    opt_op = OP_DIV;
++  }
+ 
+   if (!call->receiver || (opt_op == OP_NOP && node_type(call->receiver) == NODE_SELF)) {
+     noself = 1;
+@@ -6182,9 +6227,8 @@
+     if (val) {
+       int32_t value = int_node(tree)->value;
+       if (value == INT32_MIN) {
+-        /* -INT32_MIN overflows, use bigint */
+-        int off = new_litbint(s, "2147483648", -10);
+-        genop_2(s, OP_LOADL, cursp(), off);
++        /* -INT32_MIN overflows int32 */
++        gen_bigint_literal(s, "2147483648", 10, FALSE);
+       }
+       else {
+         gen_int(s, cursp(), -value);
+@@ -6195,11 +6239,7 @@
+ 
+   case NODE_BIGINT:
+     if (val) {
+-      char *str = bigint_node(tree)->string;
+-      int base = bigint_node(tree)->base;
+-      /* Negate base to indicate negative number */
+-      int off = new_litbint(s, str, -base);
+-      genop_2(s, OP_LOADL, cursp(), off);
++      gen_bigint_literal(s, bigint_node(tree)->string, bigint_node(tree)->base, TRUE);
+       push();
+     }
+     break;
+@@ -6559,10 +6599,7 @@
+ 
+   case NODE_BIGINT:
+     if (val) {
+-      char *str = bigint_node(tree)->string;
+-      int base = bigint_node(tree)->base;
+-      int off = new_litbint(s, str, base);
+-      genop_2(s, OP_LOADL, cursp(), off);
++      gen_bigint_literal(s, bigint_node(tree)->string, bigint_node(tree)->base, FALSE);
+       push();
+     }
+     break;
+diff -ru a/src/numeric.c b/src/numeric.c
+--- a/src/numeric.c	2026-11-16 19:26:37
++++ b/src/numeric.c	2026-11-16 20:24:50
+@@ -10,6 +10,7 @@
+ #include <mruby/string.h>
+ #include <mruby/class.h>
+ #include <mruby/internal.h>
++#include <stdio.h>
+ #include <string.h>
+ 
+ #ifndef MRB_NO_FLOAT
+@@ -420,11 +421,13 @@
+   char buf[25];
+ #ifdef MRB_USE_FLOAT32
+   const int prec =  7;
+-#else
+-  const int prec =  15;
+-#endif
+ 
+   mrb_format_float(mrb_float(flo), buf, sizeof(buf), 'g', prec, '\0');
++#else
++  /* Like DragonRuby: 16 digits (Math::PI.to_s is "3.141592653589793"), rounded exactly by the C library, where
++     mruby's own formatting gets the 16th digit wrong now and then ((9.0 * 0.95).to_s is "8.549999999999999") */
++  snprintf(buf, sizeof(buf), "%.16g", (double)mrb_float(flo));
++#endif
+   for (char *p = buf; *p; p++) {
+     if (*p == '.') goto exit;
+     if (*p == 'e') {
+diff -ru a/src/readfloat.c b/src/readfloat.c
+--- a/src/readfloat.c	2026-11-16 20:26:38
++++ b/src/readfloat.c	2026-11-16 20:26:45
+@@ -5,6 +5,7 @@
+ #include <string.h>
+ #include <math.h>
+ #include <stdint.h>
++#include <stdlib.h>
+ 
+ // Powers of 10 lookup table for better performance and accuracy
+ static const double pow10_positive[] = {
+@@ -207,6 +208,19 @@
+   // Set endp
+  done:
+   if (endp) *endp = (char*)a;
++  // Like DragonRuby, which parses with the C library's strtod(3): the double nearest to the number that was
++  // scanned above. The arithmetic above can be a bit off (0.95 became 0.95000000000000007).
++  {
++    char buffer[128];
++    size_t length = (size_t)(a - str);
++    char *copy = length < sizeof(buffer) ? buffer : (char*)malloc(length + 1);
++    if (copy) {
++      memcpy(copy, str, length);
++      copy[length] = '\0';
++      res = strtod(copy, NULL);
++      if (copy != buffer) free(copy);
++    }
++  }
+   *fp = res;
+ 
+   // strtod(3) stores ERANGE to errno for overflow/underflow
+diff -ru a/src/vm.c b/src/vm.c
+--- a/src/vm.c	2026-11-16 19:21:48
++++ b/src/vm.c	2026-11-16 19:21:52
+@@ -3009,14 +3009,12 @@
+ 
+       /* need to check if op is overridden */
+       switch (TYPES2(mrb_type(regs[a]),mrb_type(regs[a+1]))) {
+-      case TYPES2(MRB_TT_INTEGER,MRB_TT_INTEGER):
+-        {
+-          mrb_int x = mrb_integer(regs[a]);
+-          mrb_int y = mrb_integer(regs[a+1]);
+-          regs[a] = mrb_div_int_value(mrb, x, y);
+-        }
+-        NEXT;
+ #ifndef MRB_NO_FLOAT
++      /* Like DragonRuby: the / operator on two Integers gives a Float (Integer#/ called as a method does not) */
++      case TYPES2(MRB_TT_INTEGER,MRB_TT_INTEGER):
++        x = (mrb_float)mrb_integer(regs[a]);
++        y = (mrb_float)mrb_integer(regs[a+1]);
++        break;
+       case TYPES2(MRB_TT_INTEGER,MRB_TT_FLOAT):
+         x = (mrb_float)mrb_integer(regs[a]);
+         y = mrb_float(regs[a+1]);
