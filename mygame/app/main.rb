@@ -15,6 +15,7 @@ require 'app/render/pixel_font'
 require 'app/render/textures'
 require 'app/render/camera'
 require 'app/render/post_process'
+require 'app/render/frame_stats'
 require 'app/game'
 require 'app/game_cli'
 

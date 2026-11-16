@@ -15,6 +15,23 @@ class SplatBatch
   # shift_x/shift_y move the whole batch on top of the camera offset, e.g. to make one thing tremble on its own
   attr_accessor :count, :shift_x, :shift_y
 
+  # Drawing happens after the tick, so timing the tick misses it: batches add up their drawing here instead
+  @draw_seconds = 0.0
+  @drawn = 0
+
+  # Milliseconds spent drawing and the number of splats drawn since the last call
+  def self.take_draw_stats
+    stats = [@draw_seconds * 1000, @drawn]
+    @draw_seconds = 0.0
+    @drawn = 0
+    stats
+  end
+
+  def self.record_draw(seconds, splats)
+    @draw_seconds += seconds
+    @drawn += splats
+  end
+
   # parallax is how much the batch follows the camera: distant things like the sky move less
   def initialize(layer, path: :splat, parallax: 1.0)
     @layer = layer
@@ -60,6 +77,7 @@ class SplatBatch
   end
 
   def draw_override(ffi)
+    started = Time.now.to_f
     d = @data
     path = @path
     blendmode = @blendmode
@@ -74,5 +92,6 @@ class SplatBatch
                         blendmode, 0.5, 0.5, 1
       i += STRIDE
     end
+    SplatBatch.record_draw(Time.now.to_f - started, @count)
   end
 end

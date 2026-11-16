@@ -2,6 +2,7 @@
 module GameCli
   def self.state
     game = Game.current
-    { fps: GTK.current_framerate.round, boot_ms: game.boot_ms }
+    performance = game.performance.map { |key, value| [key, value.round(2)] }.to_h
+    { fps: GTK.current_framerate.round, boot_ms: game.boot_ms }.merge(performance)
   end
 end

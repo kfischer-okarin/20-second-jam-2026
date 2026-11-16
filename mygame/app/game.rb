@@ -45,6 +45,7 @@ class Game
     @camera = Camera.new
     @post = PostProcess.new
     @post.background_color = [58, 68, 102]
+    @frame_stats = FrameStats.new
     @model = Game.model
     @model_batch = SplatBatch.new(:solid)
     @background = background_batch
@@ -55,10 +56,17 @@ class Game
   end
 
   def tick(args)
-    dt = 1.0 / 60
-    @camera.update(dt)
-    update(dt * @camera.time_scale) unless @camera.frozen?
-    render(args.outputs)
+    @frame_stats.measure do
+      dt = 1.0 / 60
+      @camera.update(dt)
+      update(dt * @camera.time_scale) unless @camera.frozen?
+      render(args.outputs)
+    end
+  end
+
+  # See FrameStats
+  def performance
+    @frame_stats.values
   end
 
   private
