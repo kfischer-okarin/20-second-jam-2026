@@ -1,16 +1,26 @@
 # A small scene that shows the engine at work, as the starting point for a game: a glowing mushroom, an SDF model
-# baked into splats, turns in the last light of the day among fireflies. main.rb needs Game.current, #tick and
-# #post from whatever replaces it.
+# baked into splats, turns in the last light of the day among fireflies, and wherever the player clicks, a burst
+# of spores goes off with a shake, a flash and a shockwave. main.rb needs Game.current, #tick and #post from
+# whatever replaces it.
 class Game
   CENTER_X = 160.0
   CENTER_Y = 80.0
   MODEL_SCALE = 3.2
+  GROUND_Y = 52.0
+  # Far below the scene, so debris falls nearly straight down and vanishes when it reaches the ground
+  ATTRACTOR_Y = -1000.0
+  AUTOPILOT_INTERVAL = 0.6
   TAU = Math::PI * 2
   # The glowing spots on the mushroom's cap, as height and direction angles on its dome
   SPOTS = ([[1.25, 0.0]] + Array.new(6) { |i| [0.75, i * TAU / 6] } +
            Array.new(7) { |i| [0.3, (i + 0.5) * TAU / 7] }).freeze
+  RAMPS = {
+    spores: [[255, 255, 230], [230, 255, 150], [99, 199, 77], [38, 120, 66], [10, 40, 30], [0, 0, 0]]
+  }.freeze
 
-  attr_reader :post, :boot_ms
+  attr_reader :post, :boot_ms, :bursts
+  # Sets off bursts by itself (see GameCli)
+  attr_accessor :autopilot
 
   class << self
     attr_accessor :current
@@ -51,7 +61,13 @@ class Game
     @background = background_batch
     @fireflies = Array.new(24) { |i| firefly(i) }
     @firefly_batch = SplatBatch.new(:glow)
+    @spores = Particles.new(:glow, ramps: RAMPS)
+    @debris = Particles.new(:solid, ember: [25.0, 60.0, 62.0])
+    @lights = []
     @time = 0.0
+    @bursts = 0
+    @autopilot = false
+    @autopilot_timer = 0.0
     @boot_ms = ((Time.now.to_f - started) * 1000).round
   end
 
@@ -59,7 +75,7 @@ class Game
     @frame_stats.measure do
       dt = 1.0 / 60
       @camera.update(dt)
-      update(dt * @camera.time_scale) unless @camera.frozen?
+      update(dt * @camera.time_scale, args.inputs) unless @camera.frozen?
       render(args.outputs)
     end
   end
@@ -71,15 +87,67 @@ class Game
 
   private
 
-  def update(dt)
+  def update(dt, inputs)
     @time += dt
+    if inputs.mouse.click
+      burst(inputs.mouse.x / PostProcess::SCALE.to_f, inputs.mouse.y / PostProcess::SCALE.to_f)
+    elsif inputs.keyboard.key_down.space || inputs.controller_one.key_down.a
+      burst(CENTER_X, CENTER_Y + 20.0)
+    end
+    update_autopilot(dt) if @autopilot
+    @spores.update(dt, CENTER_X, ATTRACTOR_Y, GROUND_Y - ATTRACTOR_Y)
+    @debris.update(dt, CENTER_X, ATTRACTOR_Y, GROUND_Y - ATTRACTOR_Y)
+    @lights.each do |light|
+      light[2] += dt
+    end
+    @lights.reject! { |light| light[2] > 0.4 }
+  end
+
+  def update_autopilot(dt)
+    @autopilot_timer -= dt
+    return if @autopilot_timer.positive?
+
+    @autopilot_timer = AUTOPILOT_INTERVAL
+    burst(CENTER_X + ((rand - 0.5) * 160.0), CENTER_Y + (rand * 70.0))
+  end
+
+  def burst(x, y)
+    @bursts += 1
+    28.times do
+      angle = rand * TAU
+      speed = 20.0 + (rand * 70.0)
+      @spores.spawn(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed,
+                    life: 0.3 + (rand * 0.5), size: 3.0 + (rand * 4.0), end_size: 1.0, ramp: :spores, drag: 2.5,
+                    streak: 0.03)
+    end
+    10.times do
+      angle = rand * TAU
+      speed = 15.0 + (rand * 35.0)
+      @debris.spawn(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed,
+                    life: 0.8 + (rand * 0.8), size: 3.5, end_size: 2.0, color: [181, 80, 136], drag: 0.8,
+                    gravity: 90.0)
+    end
+    @lights << [x, y, 0.0]
+    @camera.shake(0.35)
+    @camera.freeze(3)
+    @camera.flash!([0.8, 1.0, 0.7], 0.3)
+    @camera.aberrate(2.0)
+    @camera.shockwave(x, y, speed: 120.0, strength: 2.5, life: 0.5)
   end
 
   def render(outputs)
+    @lighting.clear_points
+    @lights.each do |x, y, age|
+      fade = (1.0 - (age / 0.4))**2
+      @lighting.add_point(x, y, 10.0, 0.8 * fade, 2.0 * fade, 1.0 * fade, 60.0)
+    end
     @model_batch.clear
     SplatRenderer.render(@model_batch, @model, model_matrix, CENTER_X, CENTER_Y, 0.0, MODEL_SCALE, @lighting)
     render_fireflies
-    batches = [@background, @model_batch, @firefly_batch]
+    @post.flash = @camera.flash
+    @post.flash_color = @camera.flash_color
+    @post.aberration = @camera.aberration
+    batches = [@background, @model_batch, @debris.render, @firefly_batch, @spores.render]
     @post.render(outputs, batches: batches, camera: @camera, hud: hud, waves: @camera.wave_uniforms, time: @time)
   end
 
@@ -124,8 +192,12 @@ class Game
 
   def hud
     primitives = []
-    PixelFont.draw(primitives, 'SPLAT ENGINE', 160, 160, scale: 2, color: [254, 231, 97], align: :center,
-                                                         outline: [24, 20, 37])
+    text(primitives, 'SPLAT ENGINE', 160, 160, scale: 2, color: [254, 231, 97])
+    text(primitives, 'CLICK OR PRESS A', 160, 14, color: [192, 203, 220])
     primitives
+  end
+
+  def text(primitives, string, x, y, scale: 1, color: [255, 255, 255])
+    PixelFont.draw(primitives, string, x, y, scale: scale, color: color, align: :center, outline: [24, 20, 37])
   end
 end
