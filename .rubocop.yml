@@ -1,0 +1,81 @@
+inherit_mode:
+  merge:
+    - Exclude
+
+AllCops:
+  NewCops: enable
+  # DragonRuby's mruby reports RUBY_VERSION 3.0 (mruby 3.0.0)
+  TargetRubyVersion: 3.0
+  # Ruby files of the engine copied into the repository
+  Exclude:
+    - builds/**/*
+    - docs/**/*
+    - mygame-template/**/*
+    - samples/**/*
+
+# --- Personal preferences ---
+Layout/LineLength:
+  Max: 120
+
+Style/BlockDelimiters:
+  EnforcedStyle: semantic
+
+# --- DragonRuby basic settings ---
+
+# See this as refactoring suggestion not problem
+Metrics/AbcSize:
+  Severity: info
+
+# describe blocks hold all examples of a test file
+Metrics/BlockLength:
+  Exclude:
+    - mygame/tests/**/*
+
+# See this as refactoring suggestion not problem
+Metrics/ClassLength:
+  Severity: info
+
+# See this as refactoring suggestion not problem
+Metrics/MethodLength:
+  Severity: info
+  Exclude:
+    - mygame/tests/**/*
+
+# See this as refactoring suggestion not problem
+Metrics/ModuleLength:
+  Severity: info
+
+# Typical parameters/attributes for DragonRuby primitives
+Naming/MethodParameterName:
+  AllowedNames:
+    - x
+    - y
+    - w
+    - h
+    - r
+    - g
+    - b
+    - a
+
+Style/Documentation:
+  Enabled: false
+
+# Meaningless in mruby
+Style/FrozenStringLiteralComment:
+  Enabled: false
+
+Style/GlobalVars:
+  AllowedVariables:
+    - $gtk
+
+# Hash#to_h ignores its block in mruby and returns the unchanged hash
+Style/MapToHash:
+  Enabled: false
+
+# module_function without arguments does nothing in mruby
+Style/ModuleFunction:
+  EnforcedStyle: extend_self
+
+# Not implemented in mruby
+Style/RandomWithOffset:
+  Enabled: false
