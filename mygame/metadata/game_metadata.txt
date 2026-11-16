@@ -5,3 +5,5 @@ gameid=mygame
 gametitle=My Game
 version=0.1
 icon=metadata/icon.png
+highdpi=true
+shaders=true
