@@ -4,7 +4,8 @@
 //
 // Usage: web/check [setup] [seconds]
 //   setup    a GameCli setup to start with (default autopilot)
-//   seconds  how long to play (default 10)
+//   seconds  how long to play (default 35: a round of autopilot, longer than 20 seconds with its hit-stops and slow
+//            motion, through the finale to the results)
 
 const fs = require('node:fs');
 const http = require('node:http');
@@ -20,7 +21,7 @@ const CONTENT_TYPES = {
 };
 
 async function main() {
-  const [setup = 'autopilot', seconds = '10'] = process.argv.slice(2);
+  const [setup = 'autopilot', seconds = '35'] = process.argv.slice(2);
   if (!fs.existsSync(path.join(DIST, 'index.html'))) fail('No web build in web/dist: run web/build first.');
 
   const server = await serve(DIST);
