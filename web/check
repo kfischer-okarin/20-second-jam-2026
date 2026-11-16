@@ -1,0 +1,108 @@
+#!/usr/bin/env node
+// Plays the web build (web/dist) by itself in headless Chrome and fails on any error: the quick check after
+// bringing changes over from DragonRuby. Needs `npm install` in web/ once (see web/README.md).
+//
+// Usage: web/check [setup] [seconds]
+//   setup    a GameCli setup to start with (default autopilot)
+//   seconds  how long to play (default 10)
+
+const fs = require('node:fs');
+const http = require('node:http');
+const path = require('node:path');
+
+const DIST = path.join(__dirname, 'dist');
+const POLL_SECONDS = 2;
+const CONTENT_TYPES = {
+  '.html': 'text/html',
+  '.js': 'text/javascript',
+  '.wasm': 'application/wasm',
+  '.data': 'application/octet-stream',
+};
+
+async function main() {
+  const [setup = 'autopilot', seconds = '10'] = process.argv.slice(2);
+  if (!fs.existsSync(path.join(DIST, 'index.html'))) fail('No web build in web/dist: run web/build first.');
+
+  const server = await serve(DIST);
+  const browser = await launchChrome();
+  const errors = [];
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+    page.on('pageerror', (error) => errors.push(error.message));
+    page.on('console', (message) => {
+      if (message.type() === 'error') errors.push(message.text());
+    });
+    await page.goto(`http://127.0.0.1:${server.address().port}/?setup=${setup}`);
+    await page.waitForSelector('#start.ready', { timeout: 60000 });
+    await page.click('#start');
+    await play(page, Number(seconds), errors);
+  } finally {
+    await browser.close();
+    server.close();
+  }
+  if (errors.length > 0) fail(`The web build failed:\n${errors.join('\n')}`);
+  console.log('The web build played without errors.');
+}
+
+// Prints GameCli.state every few seconds, and notices when the game stops ticking or shows its error panel
+async function play(page, seconds, errors) {
+  const evaluate = (code) => page.evaluate((ruby) => dr.eval(ruby), code);
+  const end = Date.now() + seconds * 1000;
+  let lastTick = -1;
+  while (Date.now() < end && errors.length === 0) {
+    await page.waitForTimeout(POLL_SECONDS * 1000);
+    const panel = await page.evaluate(() => {
+      const element = document.getElementById('error');
+      return element.hidden ? null : element.textContent;
+    });
+    if (panel) {
+      errors.push(panel);
+      break;
+    }
+    try {
+      const tick = Number(await evaluate('Kernel.tick_count'));
+      if (tick <= lastTick) errors.push(`The game stopped ticking at tick ${tick}`);
+      lastTick = tick;
+      console.log(`tick ${tick}: ${await evaluate('GameCli.state')}`);
+    } catch (error) {
+      errors.push(error.message);
+    }
+  }
+}
+
+// Serves a folder on a free port of localhost
+function serve(root) {
+  const server = http.createServer((request, response) => {
+    const pathname = decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
+    const file = path.join(root, pathname === '/' ? 'index.html' : pathname);
+    if (!file.startsWith(root) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
+      response.writeHead(404).end();
+      return;
+    }
+    response.writeHead(200, { 'Content-Type': CONTENT_TYPES[path.extname(file)] || 'application/octet-stream' });
+    fs.createReadStream(file).pipe(response);
+  });
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
+}
+
+// The installed Google Chrome, or else Playwright's own Chromium (npx playwright install chromium)
+async function launchChrome() {
+  let chromium;
+  try {
+    ({ chromium } = require('playwright'));
+  } catch {
+    fail('Playwright is missing: run npm install in web/ first.');
+  }
+  try {
+    return await chromium.launch({ channel: 'chrome' });
+  } catch {
+    return chromium.launch();
+  }
+}
+
+function fail(message) {
+  console.error(message);
+  process.exit(1);
+}
+
+main();

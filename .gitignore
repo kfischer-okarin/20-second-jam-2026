@@ -28,9 +28,10 @@ mygame/shaders/*.dxil
 mygame/shaders/*.msl
 mygame/shaders/*.spv
 
-# Web build: its output, and mruby and the staged game it builds from
+# Web build: its output, mruby and the staged game it builds from, and the npm packages of web/check
 /web/dist
 /web/.cache
+/web/node_modules
 
 # Others
 /.dragonruby-files

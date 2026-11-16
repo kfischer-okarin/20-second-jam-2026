@@ -1,0 +1,8 @@
+{
+  "name": "web-check",
+  "type": "commonjs",
+  "private": true,
+  "devDependencies": {
+    "playwright": "^1.65.0"
+  }
+}
