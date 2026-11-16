@@ -1,0 +1,250 @@
+#!/usr/bin/env ruby
+# Builds the web version of mygame/ into web/dist: index.html with its .js, .wasm and .data files, and a zip of
+# them to upload to itch.io as an HTML5 game. See web/README.md.
+#
+# Steps:
+# 1. mruby, patched to behave like DragonRuby's (web/runtime/mruby), built once into web/.cache
+# 2. a copy of mygame/ without tests and engine output, with every shader compiled from HLSL to WebGL's GLSL
+# 3. the runtime (web/runtime) linked with mruby and the copy of the game
+
+require 'digest'
+require 'fileutils'
+require 'json'
+require 'open3'
+
+ROOT = File.expand_path('..', __dir__)
+WEB = File.join(ROOT, 'web')
+RUNTIME = File.join(WEB, 'runtime')
+CACHE = File.join(WEB, '.cache')
+DIST = File.join(WEB, 'dist')
+GAME = File.join(ROOT, 'mygame')
+
+MRUBY_VERSION = '4.0.0'.freeze
+MRUBY_URL = "https://github.com/mruby/mruby/archive/refs/tags/#{MRUBY_VERSION}.tar.gz".freeze
+TOOLS = {
+  'emcc' => 'brew install emscripten',
+  'glslangValidator' => 'brew install glslang',
+  'spirv-cross' => 'brew install spirv-cross',
+  'rake' => 'gem install rake',
+  'zip' => 'brew install zip'
+}.freeze
+
+# Left out of the copy of mygame/: tests, what DragonRuby writes, and shaders compiled for DragonRuby
+GAME_EXCLUDES = %w[tests tmp errors logs .DS_Store *.spv *.msl *.dxil].freeze
+
+def main
+  check_tools
+  mruby_build = build_mruby
+  stage = stage_game
+  compile_shaders(stage)
+  link(mruby_build, stage)
+  zip = package
+  puts "Built #{relative(DIST)}/index.html and #{relative(zip)} (for itch.io). Run it with web/serve."
+end
+
+def check_tools
+  missing = TOOLS.keys.reject { |tool| system("command -v #{tool} > /dev/null") }
+  return if missing.empty?
+
+  abort "Missing tools: #{missing.join(', ')}. Install them with:\n" +
+        missing.map { |tool| "  #{TOOLS[tool]}" }.join("\n")
+end
+
+# --- mruby ---------------------------------------------------------------------------------------------------
+
+# Rebuilt whenever the version, the patch or the build configuration changes
+def build_mruby
+  config = File.join(RUNTIME, 'mruby', 'build_config.rb')
+  patch = File.join(RUNTIME, 'mruby', 'dragonruby-numbers.patch')
+  key = Digest::SHA256.hexdigest([MRUBY_VERSION, File.read(config), File.read(patch)].join("\n"))[0, 12]
+  build_dir = File.join(CACHE, "mruby-build-#{key}")
+  return build_dir if File.exist?(File.join(build_dir, 'emscripten', 'lib', 'libmruby.a'))
+
+  source = File.join(CACHE, "mruby-#{key}")
+  puts "Building mruby #{MRUBY_VERSION} into #{relative(build_dir)} (takes a few minutes once)"
+  FileUtils.rm_rf(source)
+  FileUtils.mkdir_p(source)
+  tarball = File.join(CACHE, "mruby-#{MRUBY_VERSION}.tar.gz")
+  run('curl', '-sSfL', '-o', tarball, MRUBY_URL) unless File.exist?(tarball)
+  run('tar', 'xzf', tarball, '-C', source, '--strip-components', '1')
+  run('patch', '-p1', '-i', patch, chdir: source)
+  run({ 'MRUBY_CONFIG' => config, 'MRUBY_BUILD_DIR' => build_dir }, 'rake', '-j8', 'all', chdir: source)
+  build_dir
+end
+
+# --- The game ------------------------------------------------------------------------------------------------
+
+# web/.cache/stage holds the files the game sees: game/ is mygame/, runtime/ the Ruby half of the runtime
+def stage_game
+  stage = File.join(CACHE, 'stage')
+  FileUtils.rm_rf(stage)
+  FileUtils.mkdir_p(File.join(stage, 'runtime'))
+  excludes = GAME_EXCLUDES.flat_map { |pattern| ['--exclude', pattern] }
+  run('rsync', '-a', *excludes, "#{GAME}/", File.join(stage, 'game'))
+  FileUtils.cp(File.join(RUNTIME, 'dragonruby.rb'), File.join(stage, 'runtime'))
+  stage
+end
+
+def compile_shaders(stage)
+  Dir.glob(File.join(stage, 'game', '**', '*.hlsl')).each do |hlsl|
+    path = hlsl.delete_prefix("#{File.join(stage, 'game')}/")
+    File.write("#{hlsl}.json", JSON.generate(ShaderCompiler.new(hlsl, path).compile))
+  end
+end
+
+# Compiles a DragonRuby fragment shader (HLSL) to GLSL ES 3.00 for WebGL2, through SPIR-V, and describes how
+# host.js binds it: which texture unit each sampler reads (tN), and the uniform block that DragonRuby's
+# uniforms: fill in order
+class ShaderCompiler
+  SEMANTICS = { /\ACOLOR0?\z/i => 'dr_tex_color', /\ATEXCOORD0?\z/i => 'dr_tex_coord' }.freeze
+
+  def initialize(hlsl, path)
+    @hlsl = hlsl
+    @path = path
+    @source = File.read(hlsl)
+  end
+
+  def compile
+    spirv = spirv_for(hlsl_offsets: false)
+    reflection = reflect(spirv)
+    check_uniform_layout(reflection, reflect(spirv_for(hlsl_offsets: true)))
+    {
+      path: @path,
+      glsl: glsl(spirv, reflection),
+      samplers: samplers(reflection),
+      uniform_block: uniform_block(reflection)
+    }
+  end
+
+  private
+
+  def spirv_for(hlsl_offsets:)
+    FileUtils.mkdir_p(File.join(CACHE, 'spirv'))
+    extension = hlsl_offsets ? '.hlsl-offsets.spv' : '.spv'
+    output = File.join(CACHE, 'spirv', @path.tr('/', '_') + extension)
+    flags = hlsl_offsets ? ['--hlsl-offsets'] : []
+    run_quietly('glslangValidator', '-D', '-V', '-S', 'frag', '-e', 'main', '--auto-map-locations', *flags,
+                '-o', output, @hlsl)
+    output
+  end
+
+  def reflect(spirv)
+    JSON.parse(run_quietly('spirv-cross', spirv, '--reflect'))
+  end
+
+  # host.js feeds the shader's inputs from its own vertex shader, by the names that their semantics map to
+  def glsl(spirv, reflection)
+    renames = (reflection['inputs'] || []).flat_map { |input|
+      ['--rename-interface-variable', 'in', input['location'].to_s, input_name(input)]
+    }
+    run_quietly('spirv-cross', spirv, '--es', '--version', '300', *renames)
+  end
+
+  def input_name(input)
+    member = input['name'].split('.').last
+    semantic = @source[/\b#{Regexp.escape(member)}\s*:\s*(\w+)/, 1]
+    _pattern, name = SEMANTICS.find { |pattern, _name| semantic&.match?(pattern) }
+    name || fail_with("input #{member} has the semantic #{semantic.inspect}; only COLOR0 and TEXCOORD0 are available")
+  end
+
+  # SPIRV-Cross combines each texture with each sampler it is used with into one sampler2D (or with a dummy
+  # sampler where the texture is only measured); all of them read the texture's register
+  def samplers(reflection)
+    sampler_names = (reflection['separate_samplers'] || []).map { |sampler| sampler['name'] }
+    sampler_names << 'SPIRV_Cross_DummySampler'
+    (reflection['separate_images'] || []).each_with_object({}) do |image, result|
+      sampler_names.each do |sampler|
+        result["SPIRV_Cross_Combined#{image['name']}#{sampler}"] = image['binding']
+      end
+    end
+  end
+
+  def uniform_block(reflection)
+    block = (reflection['ubos'] || []).first
+    block && { name: block['name'], size: block['block_size'] }
+  end
+
+  # DragonRuby fills the cbuffer with HLSL's packing; WebGL reads it with std140. They agree for float4s and for
+  # floats grouped by four, but not for every layout.
+  def check_uniform_layout(std140, hlsl)
+    return if member_offsets(std140) == member_offsets(hlsl)
+
+    fail_with 'its cbuffer has a different layout in WebGL than in DragonRuby; declare its fields as float4s ' \
+              "(std140 offsets #{member_offsets(std140)}, HLSL offsets #{member_offsets(hlsl)})"
+  end
+
+  def member_offsets(reflection)
+    block = (reflection['ubos'] || []).first
+    return [] unless block
+
+    reflection['types'][block['type']]['members'].map { |member| member['offset'] }
+  end
+
+  def run_quietly(*command)
+    output, status = Open3.capture2e(*command)
+    fail_with "#{command.first} failed:\n#{output}" unless status.success?
+    output
+  end
+
+  def fail_with(message)
+    abort "#{@path}: #{message}"
+  end
+end
+
+# --- Linking and packaging -----------------------------------------------------------------------------------
+
+def link(mruby_build, stage)
+  FileUtils.rm_rf(DIST)
+  FileUtils.mkdir_p(DIST)
+  mruby_config = File.join(mruby_build, 'emscripten', 'host-bin', 'mruby-config')
+  cflags = capture(mruby_config, '--cflags').split
+  libs = capture(mruby_config, '--ldflags', '--libs').split
+  # -g0 after mruby's -g: debug info would double the size of index.wasm
+  run('emcc', '-O3', *cflags, '-g0', File.join(RUNTIME, 'main.c'), *libs,
+      '-o', File.join(DIST, 'index.html'),
+      '--shell-file', shell_file,
+      '--pre-js', File.join(RUNTIME, 'host.js'),
+      '--preload-file', "#{stage}@/",
+      '-fwasm-exceptions', '-sSUPPORT_LONGJMP=wasm',
+      '-sENVIRONMENT=web', '-sALLOW_MEMORY_GROWTH=1', '-sINITIAL_MEMORY=64MB', '-sSTACK_SIZE=1MB',
+      '-sEXPORTED_FUNCTIONS=_web_boot,_web_tick,_web_eval,_web_last_eval_failed,_free',
+      '-sEXPORTED_RUNTIME_METHODS=ccall,UTF8ToString,stringToNewUTF8,FS')
+end
+
+# The page's title comes from the game's metadata
+def shell_file
+  metadata = File.read(File.join(GAME, 'metadata', 'game_metadata.txt'))
+  title = metadata[/^gametitle=(.*)$/, 1] || 'Game'
+  path = File.join(CACHE, 'shell.html')
+  File.write(path, File.read(File.join(RUNTIME, 'shell.html')).gsub('__GAME_TITLE__', title.strip))
+  path
+end
+
+def package
+  metadata = File.read(File.join(GAME, 'metadata', 'game_metadata.txt'))
+  name = [metadata[/^gameid=(.*)$/, 1], metadata[/^version=(.*)$/, 1]].compact.map(&:strip).join('-')
+  zip = File.join(DIST, "#{name}-web.zip")
+  files = Dir.children(DIST).grep(/\Aindex\./).sort
+  run('zip', '-q', '-X', zip, *files, chdir: DIST)
+  zip
+end
+
+# --- Helpers -------------------------------------------------------------------------------------------------
+
+def run(*command, chdir: ROOT)
+  return if system(*command, chdir: chdir)
+
+  abort "Failed: #{command.grep_v(Hash).join(' ')}"
+end
+
+def capture(*command)
+  output, status = Open3.capture2(*command)
+  abort "Failed: #{command.join(' ')}" unless status.success?
+  output
+end
+
+def relative(path)
+  path.delete_prefix("#{ROOT}/")
+end
+
+main

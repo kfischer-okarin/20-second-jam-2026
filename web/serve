@@ -1,0 +1,15 @@
+#!/bin/sh
+# Serves web/dist (built by web/build) at http://localhost:8000, or the port given as the first argument.
+# Add ?setup=<setup> (from mygame/app/game_cli.rb, such as autopilot) to the URL to start the way scripts/game reset
+# does.
+
+port=${1:-8000}
+dist="$(cd "$(dirname "$0")" && pwd)/dist"
+
+if [ ! -f "$dist/index.html" ]; then
+  echo "No web build in $dist: run web/build first." >&2
+  exit 1
+fi
+
+echo "Serving $dist at http://localhost:$port"
+exec python3 -m http.server "$port" --bind 127.0.0.1 --directory "$dist"
