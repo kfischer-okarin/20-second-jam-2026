@@ -45,6 +45,12 @@ Metrics/MethodLength:
 Metrics/ModuleLength:
   Severity: info
 
+# 3D math needs coordinates plus sizes (Sdf.round_box(x, y, z, half_x, half_y, half_z, rounding)), and keyword
+# arguments are named at every call site
+Metrics/ParameterLists:
+  Max: 7
+  CountKeywordArgs: false
+
 # Typical parameters/attributes for DragonRuby primitives
 Naming/MethodParameterName:
   AllowedNames:
@@ -56,6 +62,24 @@ Naming/MethodParameterName:
     - g
     - b
     - a
+    # Vector components and time steps in 3D and simulation math
+    - z
+    - t
+    - dt
+    - dx
+    - dy
+    - dz
+    - nx
+    - ny
+    - nz
+    - rx
+    - ry
+    - rz
+    - tx
+    - ty
+    - tz
+    - vx
+    - vy
 
 Style/Documentation:
   Enabled: false
