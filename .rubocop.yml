@@ -80,6 +80,16 @@ Naming/MethodParameterName:
     - tz
     - vx
     - vy
+    - up
+    # Corners of DragonRuby's triangle primitives
+    - x1
+    - y1
+    - x2
+    - y2
+    - x3
+    - y3
+    - x4
+    - y4
 
 Style/Documentation:
   Enabled: false

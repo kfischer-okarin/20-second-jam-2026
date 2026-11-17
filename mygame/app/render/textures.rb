@@ -6,6 +6,9 @@ module Textures
     radial(args, :splat, 32) do |distance_squared|
       gaussian(distance_squared)
     end
+    radial(args, :disc, 32) do |distance_squared|
+      disc(distance_squared)
+    end
     radial(args, :ring, 96) do |distance_squared|
       ring(Math.sqrt(distance_squared))
     end
@@ -31,6 +34,16 @@ module Textures
 
     edge = Math.exp(-4.0)
     (Math.exp(-4.0 * distance_squared) - edge) / (1.0 - edge)
+  end
+
+  # Opaque in its middle, falling off smoothly towards the edge: model splats that are drawn large close up need
+  # it to cover the gaps between neighbours, which a gaussian leaves almost transparent
+  def disc(distance_squared)
+    d = Math.sqrt(distance_squared)
+    return 0.0 if d >= 1.0
+
+    t = ((1.0 - d) / 0.6).clamp(0.0, 1.0)
+    t * t * (3.0 - (2.0 * t))
   end
 
   def ring(r)
