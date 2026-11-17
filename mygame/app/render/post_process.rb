@@ -13,9 +13,12 @@ class PostProcess
   MAX_WAVES = 4
   DEBUG_VIEWS = %i[rt_final rt_bg rt_solid rt_glow rt_bright rt_blur1 rt_blur2 rt_blur3 rt_ui].freeze
 
-  # background_color shows wherever nothing is drawn; shadow_tint (0..1) adds shadow_tint_color to dark tones
+  # background_color shows wherever nothing is drawn; shadow_tint (0..1) adds shadow_tint_color to dark tones.
+  # exposure multiplies the scene before flash and grading. veil (0..1) closes veil_color in from the edges of
+  # the screen, with a soft edge veil_softness wide.
   attr_accessor :background_color, :bloom, :aberration, :dither, :flash, :flash_color, :shadow_tint,
-                :shadow_tint_color, :vignette, :saturation, :outline, :bright_threshold
+                :shadow_tint_color, :vignette, :saturation, :outline, :bright_threshold, :exposure, :veil,
+                :veil_softness, :veil_color
 
   # The render target shown on screen. It belongs to the class so that a chosen view survives restarts of the
   # game (saving code, scripts/game reset).
@@ -37,6 +40,10 @@ class PostProcess
     @saturation = 1.1
     @outline = 1.0
     @bright_threshold = 0.76
+    @exposure = 1.0
+    @veil = 0.0
+    @veil_softness = 0.3
+    @veil_color = [1.0, 1.0, 1.0]
   end
 
   def debug_view
@@ -47,9 +54,9 @@ class PostProcess
     PostProcess.debug_view = view
   end
 
-  # batches are SplatBatches in drawing order; each goes to the render target of its layer and follows the
-  # camera. hud is primitives in scene pixels that stay put. waves are [x, y, radius, strength] in scene
-  # pixels with y pointing up.
+  # batches are SplatBatches (or anything else with a layer and follow_camera, like a LayerSprite) in drawing
+  # order; each goes to the render target of its layer and follows the camera. hud is primitives in scene pixels
+  # that stay put. waves are [x, y, radius, strength] in scene pixels with y pointing up.
   def render(outputs, batches:, camera:, hud:, waves:, time:)
     batches.each do |batch|
       batch.follow_camera(camera.offset_x, camera.offset_y)
@@ -121,6 +128,9 @@ class PostProcess
       x, y, radius, strength = strongest[i] || [0.0, 0.0, 0.0, 0.0]
       values.push(x, H - y, radius, strength)
     end
+    values.push(@veil, @veil_softness, @exposure, 0.0)
+    values.concat(@veil_color)
+    values << 0.0
     values.map { |value| { type: :float, value: value.to_f } }
   end
 end

@@ -1,6 +1,7 @@
 // Pixel post-processing of the low resolution scene:
 // shockwave distortion -> alpha-tested splats with outlines over the background -> additive glow -> bloom
-// -> flash, grading and vignette -> UI -> ordered dithering into a fixed 32 color palette (ENDESGA 32)
+// -> exposure, flash, grading, vignette and veil -> UI -> the nearest color of a fixed palette (ordered
+// dithering between the two nearest as much as params.w says)
 Texture2D solid_tex : register(t0, space2);
 Texture2D bg_tex : register(t1, space2);
 Texture2D glow_tex : register(t2, space2);
@@ -25,6 +26,8 @@ cbuffer Uniforms : register(b0, space3) {
   float4 wave1;
   float4 wave2;
   float4 wave3;
+  float4 veil;   // x: how far the veil has closed in from the edges 0..1, y: its softness, z: exposure
+  float4 veil_color; // rgb: the veil's color
 };
 
 struct Input {
@@ -36,18 +39,36 @@ struct Output {
   float4 frag_color : SV_Target;
 };
 
-static const float3 PALETTE[32] = {
-  float3(190, 74, 47) / 255.0, float3(215, 118, 67) / 255.0, float3(234, 212, 170) / 255.0,
-  float3(228, 166, 114) / 255.0, float3(184, 111, 80) / 255.0, float3(115, 62, 57) / 255.0,
-  float3(62, 39, 49) / 255.0, float3(162, 38, 51) / 255.0, float3(228, 59, 68) / 255.0,
-  float3(247, 118, 34) / 255.0, float3(254, 174, 52) / 255.0, float3(254, 231, 97) / 255.0,
-  float3(99, 199, 77) / 255.0, float3(62, 137, 72) / 255.0, float3(38, 92, 66) / 255.0,
-  float3(25, 60, 62) / 255.0, float3(18, 78, 137) / 255.0, float3(0, 153, 219) / 255.0,
-  float3(44, 232, 245) / 255.0, float3(255, 255, 255) / 255.0, float3(192, 203, 220) / 255.0,
-  float3(139, 155, 180) / 255.0, float3(90, 105, 136) / 255.0, float3(58, 68, 102) / 255.0,
-  float3(38, 43, 68) / 255.0, float3(24, 20, 37) / 255.0, float3(255, 0, 68) / 255.0,
-  float3(104, 56, 108) / 255.0, float3(181, 80, 136) / 255.0, float3(246, 117, 122) / 255.0,
-  float3(232, 183, 150) / 255.0, float3(194, 133, 105) / 255.0
+// Ramps for the terrace's materials, each from shadow to light with its hue shifting warmer towards the light.
+// Without dithering every pixel takes its nearest color, so each material needs close steps of its own.
+static const int PALETTE_SIZE = 42;
+static const float3 PALETTE[PALETTE_SIZE] = {
+  // darks
+  float3(18, 14, 22) / 255.0, float3(40, 32, 44) / 255.0,
+  // coffee and wood
+  float3(54, 30, 28) / 255.0, float3(86, 48, 36) / 255.0, float3(122, 72, 48) / 255.0,
+  float3(160, 102, 64) / 255.0, float3(196, 136, 88) / 255.0, float3(226, 172, 120) / 255.0,
+  float3(244, 208, 160) / 255.0,
+  // cream, milk and light
+  float3(250, 236, 212) / 255.0, float3(255, 248, 236) / 255.0, float3(255, 255, 255) / 255.0,
+  // the afternoon sky, from the haze around the sun to blue
+  float3(255, 228, 168) / 255.0, float3(250, 200, 146) / 255.0, float3(236, 176, 136) / 255.0,
+  float3(208, 182, 186) / 255.0, float3(176, 178, 204) / 255.0, float3(140, 156, 196) / 255.0,
+  float3(104, 124, 176) / 255.0,
+  // the sun
+  float3(255, 196, 92) / 255.0, float3(255, 240, 170) / 255.0, float3(226, 112, 64) / 255.0,
+  // meadow and trees
+  float3(26, 50, 42) / 255.0, float3(40, 80, 54) / 255.0, float3(62, 116, 62) / 255.0,
+  float3(100, 152, 70) / 255.0, float3(150, 184, 90) / 255.0, float3(206, 210, 126) / 255.0,
+  // glaze and denim
+  float3(28, 34, 62) / 255.0, float3(44, 56, 98) / 255.0, float3(66, 86, 136) / 255.0,
+  float3(98, 124, 172) / 255.0,
+  // steel and aluminium
+  float3(58, 62, 74) / 255.0, float3(92, 98, 112) / 255.0, float3(130, 138, 154) / 255.0,
+  float3(172, 180, 194) / 255.0, float3(212, 218, 228) / 255.0,
+  // skin
+  float3(128, 76, 58) / 255.0, float3(180, 112, 82) / 255.0, float3(216, 152, 112) / 255.0,
+  float3(240, 192, 154) / 255.0, float3(220, 128, 110) / 255.0
 };
 
 static const float BAYER[16] = {
@@ -57,7 +78,7 @@ static const float BAYER[16] = {
   15.0, 7.0, 13.0, 5.0
 };
 
-static const float3 OUTLINE = float3(24, 20, 37) / 255.0;
+static const float3 OUTLINE = float3(40, 32, 44) / 255.0;
 // Coverage at which overlapping splats count as a solid pixel
 static const float SOLID_ALPHA = 0.25;
 
@@ -122,7 +143,7 @@ float3 dither_to_palette(float3 color, float threshold, float strength) {
   float second = 1e9;
   float3 best_color = PALETTE[0];
   float3 second_color = PALETTE[0];
-  for (int i = 0; i < 32; i++) {
+  for (int i = 0; i < PALETTE_SIZE; i++) {
     float d = color_distance(color, PALETTE[i]);
     if (d < best) {
       second = best;
@@ -165,6 +186,7 @@ Output main(Input input) {
                  bilinear(blur2_tex, blur2_sampler, uv) * 0.5 +
                  bilinear(blur3_tex, blur3_sampler, uv) * 0.25;
   color += bloom * params.y;
+  color *= veil.z;
 
   color = lerp(color, flash.rgb, flash.a);
 
@@ -173,10 +195,14 @@ Output main(Input input) {
   color += tint.rgb * grade.x * (1.0 - saturate(luma * 2.0));
   color *= 1.0 - grade.y * dot(from_center, from_center) * 2.2;
 
+  // The veil closes in from the edges: at 0 it stays outside the screen, at 1 it covers all of it
+  float edge = length(from_center * float2(2.0, 2.0 * size.y / size.x)) * 1.2;
+  float reach = 1.45 - veil.x * (1.45 + veil.y);
+  color = lerp(color, veil_color.rgb, smoothstep(reach, reach + veil.y, edge));
+
+  // The HUD is stored premultiplied, and blends with its alpha so that it can fade
   float4 ui = texel(ui_tex, ui_sampler, cell, size);
-  if (ui.a > 0.5) {
-    color = ui.rgb / ui.a;
-  }
+  color = color * (1.0 - ui.a) + ui.rgb;
 
   int index = (int(cell.y) % 4) * 4 + (int(cell.x) % 4);
   float threshold = (BAYER[index] + 0.5) / 16.0;
