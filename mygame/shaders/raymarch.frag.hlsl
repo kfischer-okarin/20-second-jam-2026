@@ -5,7 +5,8 @@
 // mode.x selects what to output: 0 the shaded color (alpha 1 where something is hit), 1 geometry for the ink
 // pass (r: depth, gb: normal, a: material).
 // mode.y selects the shading: 0 smooth (soft shadows, occlusion, highlights, reflections), 1 toon (bands, a rim
-// band, a hard highlight), 2 flat (one shadow tone), 3 clay (wrap light, strong occlusion, no shine)
+// band, a hard highlight), 2 flat (one shadow tone), 3 clay (wrap light, strong occlusion, no shine), 4 ramps
+// (ink-studio's light, for a palette of ramps to snap)
 Texture2D field_tex : register(t0, space2);
 SamplerState field_sampler : register(s0, space2);
 
@@ -302,6 +303,12 @@ float3 shade(float3 p, float3 n, float3 v, int material) {
     float3 color = base * (lit > 0.12 ? 1.0 : 0.66);
     if (shine > 0.5 && pow(saturate(dot(n, h)), 40.0) * shadow > 0.6) color = float3(1.0, 1.0, 1.0);
     return color;
+  }
+  if (style == 4) {
+    // ink-studio's light: occlusion times ambient and sky, plus the shadowed sun, for the palette's ramps to snap
+    float v = ao * (0.14 + 0.3 * (0.5 + 0.5 * n.y)) + 0.72 * saturate(ndl) * shadow;
+    if (shine > 0.3 && dot(n, h) > 0.96 && shadow > 0.5) return float3(1.0, 1.0, 1.0);
+    return base * (0.25 + 0.85 * v);
   }
   if (style == 3) {
     float wrap = saturate((ndl + 0.6) / 1.6) * lerp(0.55, 1.0, shadow);

@@ -3,7 +3,10 @@
 # the game's palette or post effects. Each variant is one of
 #   splats     the baked models drawn as discs, finer discs, upright squares (voxels) or brush strokes
 #   raymarched the same SDFs traced per pixel in a shader (raymarch.frag.hlsl), shaded smooth (soft shadows,
-#              occlusion, highlights), toon (bands), flat or like clay, with or without ink lines (ink.frag.hlsl)
+#              occlusion, highlights), toon (bands), flat, like clay or snapped to a palette of ramps, with or
+#              without lines in ink or in a darker shade of the nearer shape (ink.frag.hlsl)
+#   ink splats the way ink-studio draws (InkSplatScene): light baked into ramps, crisp sorted splats resolved
+#              from twice the resolution, with contours in ink or in a darker shade
 # The light comes from the upper left front, or from behind like the game's sun.
 class RenderLab
   ELEVATION = 0.56
@@ -21,9 +24,12 @@ class RenderLab
     { name: 'SPLATS: BRUSH STROKES', splats: :stroke },
     { name: 'RAYMARCHED: SMOOTH', shading: 0 },
     { name: 'RAYMARCHED: TOON', shading: 1 },
-    { name: 'RAYMARCHED: TOON + INK', shading: 1, ink: true },
-    { name: 'RAYMARCHED: FLAT + INK', shading: 2, ink: true },
-    { name: 'RAYMARCHED: CLAY', shading: 3 }
+    { name: 'RAYMARCHED: TOON + INK', shading: 1, ink: :black },
+    { name: 'RAYMARCHED: FLAT + INK', shading: 2, ink: :black },
+    { name: 'RAYMARCHED: CLAY', shading: 3 },
+    { name: 'RAYMARCHED: RAMPS + SHADE INK', shading: 4, ink: :shade, palette: InkLook::PALETTE },
+    { name: 'INK SPLATS: SHADE CONTOURS', ink_splats: :shade },
+    { name: 'INK SPLATS: INK CONTOURS', ink_splats: :ink }
   ].freeze
 
   attr_reader :backlit
@@ -37,7 +43,8 @@ class RenderLab
     @contact = SplatBatch.new(:background)
     @coffee_sprite = LayerSprite.new(:solid)
     @raymarched = LayerSprite.new(:solid, sprite: { x: 0, y: 0, w: PostProcess::W, h: PostProcess::H,
-                                                    path: :rt_raymarch, blendmode_enum: 1 })
+                                                    path: :rt_raymarched, blendmode_enum: 1 })
+    @ink_splats = InkSplatScene.new(coffee)
     @ink = LayerSprite.new(:solid, sprite: { x: 0, y: 0, w: PostProcess::W, h: PostProcess::H, path: :rt_ink,
                                              blendmode_enum: 1 })
     @time = 0.0
@@ -68,18 +75,25 @@ class RenderLab
   def render(args)
     @time += 1.0 / 60
     upload_field(args)
-    variant[:splats] ? render_splats(args) : render_raymarched(args)
+    if variant[:ink_splats]
+      render_coffee(args)
+      @ink_splats.render(args, light_direction, variant[:ink_splats], @coffee_sprite.sprite)
+    elsif variant[:splats]
+      render_splats(args)
+    else
+      render_raymarched(args)
+    end
   end
 
-  # Neither palette nor smoothing nor glare: only the rendering itself
+  # Neither palette (unless the variant brings its own) nor smoothing nor glare: only the rendering itself
   def grade(post)
-    post.palette = []
+    post.palette = variant[:palette] || []
     post.dither = 0.0
     post.smooth = 0
     post.outline = 0.0
     post.bloom = 0.15
     post.bright_threshold = 0.9
-    post.vignette = 0.12
+    post.vignette = 0.0
     post.saturation = 1.0
     post.exposure = 1.0
     post.shadow_tint = 0.0
@@ -190,24 +204,32 @@ class RenderLab
 
   # --- Raymarched ------------------------------------------------------------------------------------------------
 
-  # The raymarch shader runs where its target is drawn: once in color into the solid layer, and once more as
-  # geometry for the ink lines. Both targets hold the coffee's grid, which the shader reads as t0.
+  # The raymarch shader runs where its target is drawn: once in color into rt_raymarched, and once more as
+  # geometry for the ink lines, which read both. Both raymarch targets hold the coffee's grid, which the shader
+  # reads as t0.
   def render_raymarched(args)
     outputs = args.outputs
     raymarch_target(outputs, :rt_raymarch, 0.0)
+    copy(outputs, :rt_raymarched, :rt_raymarch)
     batches = [@raymarched]
     return batches unless variant[:ink]
 
     raymarch_target(outputs, :rt_raymarch_geometry, 1.0)
-    geometry = outputs[:rt_geometry]
-    geometry.set w: PostProcess::W, h: PostProcess::H, background_color: [0, 0, 0, 0]
-    geometry.primitives << { x: 0, y: 0, w: PostProcess::W, h: PostProcess::H, path: :rt_raymarch_geometry,
-                             blendmode_enum: 0 }
+    copy(outputs, :rt_geometry, :rt_raymarch_geometry)
     ink = outputs[:rt_ink]
     ink.set w: PostProcess::W, h: PostProcess::H, background_color: [0, 0, 0, 0]
     ink.primitives << { x: 0, y: 0, w: PostProcess::W, h: PostProcess::H, path: :rt_geometry, blendmode_enum: 0 }
-    ink.shader = { path: 'shaders/ink.frag.hlsl', uniforms: floats([0.16, 0.12, 0.14, 0.55, 0.012, 1.0, 0.0, 0.0]) }
+    shade = variant[:ink] == :shade ? 1.0 : 0.0
+    ink.shader = { path: 'shaders/ink.frag.hlsl', textures: [:rt_raymarched],
+                   uniforms: floats([0.16, 0.12, 0.14, 0.55, 0.012, 1.0, shade, 0.0]) }
     batches << @ink
+  end
+
+  # Draws source into a target of the screen's size as it is (running source's shader, if it has one)
+  def copy(outputs, name, source)
+    target = outputs[name]
+    target.set w: PostProcess::W, h: PostProcess::H, background_color: [0, 0, 0, 0]
+    target.primitives << { x: 0, y: 0, w: PostProcess::W, h: PostProcess::H, path: source, blendmode_enum: 0 }
   end
 
   def raymarch_target(outputs, name, output)
