@@ -208,6 +208,11 @@ Output main(Input input) {
   float4 ui = texel(ui_tex, ui_sampler, cell, size);
   color = color * (1.0 - ui.a) + ui.rgb;
 
+  // An empty palette keeps every color
+  if (veil.w < 0.5) {
+    output.frag_color = float4(saturate(color), 1.0);
+    return output;
+  }
   int index = (int(cell.y) % 4) * 4 + (int(cell.x) % 4);
   float threshold = (BAYER[index] + 0.5) / 16.0;
   output.frag_color = float4(dither_to_palette(saturate(color), threshold, params.w), 1.0);

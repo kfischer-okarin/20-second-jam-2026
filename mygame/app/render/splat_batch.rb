@@ -53,6 +53,11 @@ class SplatBatch
     @count = 0
   end
 
+  # The texture every splat is drawn with
+  def path=(path)
+    @path = path.to_s
+  end
+
   def primitive_marker
     :sprite
   end

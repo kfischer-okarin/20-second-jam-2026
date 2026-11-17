@@ -24,7 +24,8 @@ class PostProcess
 
   # background_color shows wherever nothing is drawn; shadow_tint (0..1) adds shadow_tint_color to dark tones.
   # exposure multiplies the scene before flash and grading. veil (0..1) closes veil_color in from the edges of
-  # the screen, with a soft edge veil_softness wide. palette is the colors every pixel ends up as.
+  # the screen, with a soft edge veil_softness wide. palette is the colors every pixel ends up as (all colors
+  # stay when it is empty).
   # smooth (pixels, 0 for none) evens out the solid layer before that: each pixel averages its neighbors within
   # smooth that are close to its own color, closer the higher smooth_sharpness.
   attr_accessor :background_color, :bloom, :aberration, :dither, :flash, :flash_color, :shadow_tint,

@@ -39,10 +39,12 @@ module ModelCache
       @fiber ||= Fiber.new { bake_queue }
       @deadline = Time.now.to_f + seconds
       @fiber.resume
+      @deadline = nil
       @fiber = nil unless @fiber.alive?
     end
 
-    # Called by SdfBaker between pieces of work: hands the frame back when its time is up
+    # Called by SdfBaker between pieces of work: hands the frame back when its time is up. Only a background bake
+    # has a deadline; one that is needed right away runs through.
     def checkpoint
       Fiber.yield if @deadline && Time.now.to_f > @deadline
     end

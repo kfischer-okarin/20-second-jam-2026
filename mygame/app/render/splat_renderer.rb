@@ -6,7 +6,8 @@
 # A splat's aux (0..1) is its gloss: that much of its light is the environment reflected around its normal (see
 # Lighting), which makes metal and glaze; reflect scales it. flash (0..1) adds white. bands, [count, low, high],
 # snaps the brightness of the light to count levels between low and high, like a comic's flat tones (cel
-# shading).
+# shading). shape :square draws upright squares instead (a voxel look, for a batch drawing :pixel), :stroke
+# brush strokes that run around the model's vertical axis.
 module SplatRenderer
   RAD_TO_DEG = 180.0 / Math::PI
   MIN_ASPECT = 0.32
@@ -18,7 +19,7 @@ module SplatRenderer
   # Hot loop: comparisons stay operators instead of [a, b].max or #positive?, which allocate or send in mruby.
   # rubocop:disable-next Metrics/ParameterLists, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity, Metrics/BlockNesting, Style/MinMaxComparison, Style/NumericPredicate, Metrics/MethodLength, Metrics/AbcSize
   def render(batch, model, matrix, tx, ty, tz, scale, lighting, flash: 0.0, glow: 1.0, cull: -0.12, bands: nil,
-             reflect: 1.0)
+             reflect: 1.0, shape: :disc)
     m0, m1, m2, m3, m4, m5, m6, m7, m8 = matrix
     band_steps, band_low, band_high = bands
     band_steps = band_steps ? band_steps - 1 : 0
@@ -163,13 +164,24 @@ module SplatRenderer
         b = 255.0 if b > 255.0
 
         w = sizes[i] * scale
-        aspect = wz < 0.0 ? -wz : wz
-        aspect = MIN_ASPECT if aspect < MIN_ASPECT
         out[j] = sx
         out[j + 1] = sy
-        out[j + 2] = w
-        out[j + 3] = w * aspect
-        out[j + 4] = (Math.atan2(wy, wx) * RAD_TO_DEG) - 90.0
+        if shape == :disc
+          aspect = wz < 0.0 ? -wz : wz
+          aspect = MIN_ASPECT if aspect < MIN_ASPECT
+          out[j + 2] = w
+          out[j + 3] = w * aspect
+          out[j + 4] = (Math.atan2(wy, wx) * RAD_TO_DEG) - 90.0
+        elsif shape == :square
+          out[j + 2] = w * 0.64
+          out[j + 3] = w * 0.64
+          out[j + 4] = 0.0
+        else
+          # A stroke runs around the model's vertical axis: along (-nz, 0, nx) in model space
+          out[j + 2] = w * 1.9
+          out[j + 3] = w * 0.42
+          out[j + 4] = Math.atan2((m3 * -az) + (m5 * ax), (m0 * -az) + (m2 * ax)) * RAD_TO_DEG
+        end
         out[j + 5] = r
         out[j + 6] = g
         out[j + 7] = b
