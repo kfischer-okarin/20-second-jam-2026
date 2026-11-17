@@ -4,7 +4,9 @@
 # depth sorting (batches draw in order, and a model's splats in the order of its parts).
 #
 # A splat's aux (0..1) is its gloss: that much of its light is the environment reflected around its normal (see
-# Lighting), which makes metal and glaze. flash (0..1) adds white.
+# Lighting), which makes metal and glaze; reflect scales it. flash (0..1) adds white. bands, [count, low, high],
+# snaps the brightness of the light to count levels between low and high, like a comic's flat tones (cel
+# shading).
 module SplatRenderer
   RAD_TO_DEG = 180.0 / Math::PI
   MIN_ASPECT = 0.32
@@ -15,8 +17,12 @@ module SplatRenderer
 
   # Hot loop: comparisons stay operators instead of [a, b].max or #positive?, which allocate or send in mruby.
   # rubocop:disable-next Metrics/ParameterLists, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity, Metrics/BlockNesting, Style/MinMaxComparison, Style/NumericPredicate, Metrics/MethodLength, Metrics/AbcSize
-  def render(batch, model, matrix, tx, ty, tz, scale, lighting, flash: 0.0, glow: 1.0, cull: -0.12)
+  def render(batch, model, matrix, tx, ty, tz, scale, lighting, flash: 0.0, glow: 1.0, cull: -0.12, bands: nil,
+             reflect: 1.0)
     m0, m1, m2, m3, m4, m5, m6, m7, m8 = matrix
+    band_steps, band_low, band_high = bands
+    band_steps = band_steps ? band_steps - 1 : 0
+    band_span = band_steps.positive? ? (band_high - band_low) : 1.0
     px = model.px
     py = model.py
     pz = model.pz
@@ -77,7 +83,7 @@ module SplatRenderer
         lg = gnd_g + (hemi * amb_g) + (diffuse * sun_g) + (rim * rim_g)
         lb = gnd_b + (hemi * amb_b) + (diffuse * sun_b) + (rim * rim_b)
 
-        shine = gloss[i]
+        shine = gloss[i] * reflect
         if shine > 0.0
           # The view direction (0, 0, 1) reflected around the normal
           twice = wz + wz
@@ -131,6 +137,20 @@ module SplatRenderer
               end
             end
             k += 1
+          end
+        end
+
+        if band_steps.positive?
+          brightness = (lr + lg + lb) * 0.3333
+          if brightness > 0.001
+            level = ((brightness - band_low) / band_span * band_steps) + 0.5
+            level = 0.0 if level < 0.0
+            level = band_steps.to_f if level > band_steps
+            snapped = band_low + (level.floor * band_span / band_steps)
+            factor = snapped / brightness
+            lr *= factor
+            lg *= factor
+            lb *= factor
           end
         end
 

@@ -12,8 +12,11 @@ class SplatBatch
   BLENDMODES = { background: 1, solid: 1, glow: 2 }.freeze
 
   attr_reader :data, :layer
-  # shift_x/shift_y move the whole batch on top of the camera offset, e.g. to make one thing tremble on its own
-  attr_accessor :count, :shift_x, :shift_y
+  # shift_x/shift_y move the whole batch on top of the camera offset, e.g. to make one thing tremble on its own.
+  # ink outlines the batch like a comic's ink lines: [r, g, b, width] draws every splat width pixels larger on
+  # each side in that color before the splats themselves, so a line shows around whatever the batch covers, also
+  # where it overlaps what was drawn before it. [:shade, factor, width] uses each splat's own color times factor.
+  attr_accessor :count, :shift_x, :shift_y, :ink
 
   # Drawing happens after the tick, so timing the tick misses it: batches add up their drawing here instead
   @draw_seconds = 0.0
@@ -78,6 +81,7 @@ class SplatBatch
 
   def draw_override(ffi)
     started = Time.now.to_f
+    draw_ink(ffi) if @ink
     d = @data
     path = @path
     blendmode = @blendmode
@@ -92,6 +96,32 @@ class SplatBatch
                         blendmode, 0.5, 0.5, 1
       i += STRIDE
     end
-    SplatBatch.record_draw(Time.now.to_f - started, @count)
+    SplatBatch.record_draw(Time.now.to_f - started, @count * (@ink ? 2 : 1))
+  end
+
+  private
+
+  def draw_ink(ffi)
+    kind, green_or_factor, blue_or_width, width = @ink
+    shade = kind == :shade
+    factor = shade ? green_or_factor : 0.0
+    pad = (shade ? blue_or_width : width) * 2.0
+    d = @data
+    path = @path
+    blendmode = @blendmode
+    ox = @offset_x
+    oy = @offset_y
+    i = 0
+    n = @count * STRIDE
+    while i < n
+      r = shade ? d[i + 5] * factor : kind
+      g = shade ? d[i + 6] * factor : green_or_factor
+      b = shade ? d[i + 7] * factor : blue_or_width
+      ffi.draw_sprite_6 d[i] + ox, d[i + 1] + oy, d[i + 2] + pad, d[i + 3] + pad, path, d[i + 4],
+                        d[i + 8], r, g, b,
+                        nil, nil, nil, nil, false, false, nil, nil, nil, nil, nil, nil,
+                        blendmode, 0.5, 0.5, 1
+      i += STRIDE
+    end
   end
 end

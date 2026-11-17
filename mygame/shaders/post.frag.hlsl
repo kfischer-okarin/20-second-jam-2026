@@ -1,6 +1,6 @@
 // Pixel post-processing of the low resolution scene:
 // shockwave distortion -> alpha-tested splats with outlines over the background -> additive glow -> bloom
-// -> exposure, flash, grading, vignette and veil -> UI -> the nearest color of a fixed palette (ordered
+// -> exposure, flash, grading, vignette and veil -> UI -> the nearest color of the palette (ordered
 // dithering between the two nearest as much as params.w says)
 Texture2D solid_tex : register(t0, space2);
 Texture2D bg_tex : register(t1, space2);
@@ -9,6 +9,7 @@ Texture2D blur1_tex : register(t3, space2);
 Texture2D blur2_tex : register(t4, space2);
 Texture2D blur3_tex : register(t5, space2);
 Texture2D ui_tex : register(t6, space2);
+Texture2D palette_tex : register(t7, space2);
 SamplerState solid_sampler : register(s0, space2);
 SamplerState bg_sampler : register(s1, space2);
 SamplerState glow_sampler : register(s2, space2);
@@ -16,18 +17,20 @@ SamplerState blur1_sampler : register(s3, space2);
 SamplerState blur2_sampler : register(s4, space2);
 SamplerState blur3_sampler : register(s5, space2);
 SamplerState ui_sampler : register(s6, space2);
+SamplerState palette_sampler : register(s7, space2);
 
 cbuffer Uniforms : register(b0, space3) {
   float4 params; // x: time, y: bloom strength, z: chromatic aberration in pixels, w: dither strength
   float4 flash;  // rgb: flash color, a: flash amount
   float4 grade;  // x: shadow tint 0..1, y: vignette, z: saturation, w: outline strength
-  float4 tint;   // rgb: the color the shadow tint adds to dark tones
+  float4 tint;   // rgb: the color the shadow tint adds to dark tones, w: smoothing radius in pixels (0: off)
   float4 wave0;  // xy: center in pixels from the top left, z: radius, w: strength in pixels
   float4 wave1;
   float4 wave2;
   float4 wave3;
-  float4 veil;   // x: how far the veil has closed in from the edges 0..1, y: its softness, z: exposure
-  float4 veil_color; // rgb: the veil's color
+  float4 veil;   // x: how far the veil has closed in from the edges 0..1, y: its softness, z: exposure,
+                 // w: the number of palette colors
+  float4 veil_color; // rgb: the veil's color, w: how different a neighbor's color may be to be smoothed with
 };
 
 struct Input {
@@ -39,37 +42,12 @@ struct Output {
   float4 frag_color : SV_Target;
 };
 
-// Ramps for the terrace's materials, each from shadow to light with its hue shifting warmer towards the light.
-// Without dithering every pixel takes its nearest color, so each material needs close steps of its own.
-static const int PALETTE_SIZE = 42;
-static const float3 PALETTE[PALETTE_SIZE] = {
-  // darks
-  float3(18, 14, 22) / 255.0, float3(40, 32, 44) / 255.0,
-  // coffee and wood
-  float3(54, 30, 28) / 255.0, float3(86, 48, 36) / 255.0, float3(122, 72, 48) / 255.0,
-  float3(160, 102, 64) / 255.0, float3(196, 136, 88) / 255.0, float3(226, 172, 120) / 255.0,
-  float3(244, 208, 160) / 255.0,
-  // cream, milk and light
-  float3(250, 236, 212) / 255.0, float3(255, 248, 236) / 255.0, float3(255, 255, 255) / 255.0,
-  // the afternoon sky, from the haze around the sun to blue
-  float3(255, 228, 168) / 255.0, float3(250, 200, 146) / 255.0, float3(236, 176, 136) / 255.0,
-  float3(208, 182, 186) / 255.0, float3(176, 178, 204) / 255.0, float3(140, 156, 196) / 255.0,
-  float3(104, 124, 176) / 255.0,
-  // the sun
-  float3(255, 196, 92) / 255.0, float3(255, 240, 170) / 255.0, float3(226, 112, 64) / 255.0,
-  // meadow and trees
-  float3(26, 50, 42) / 255.0, float3(40, 80, 54) / 255.0, float3(62, 116, 62) / 255.0,
-  float3(100, 152, 70) / 255.0, float3(150, 184, 90) / 255.0, float3(206, 210, 126) / 255.0,
-  // glaze and denim
-  float3(28, 34, 62) / 255.0, float3(44, 56, 98) / 255.0, float3(66, 86, 136) / 255.0,
-  float3(98, 124, 172) / 255.0,
-  // steel and aluminium
-  float3(58, 62, 74) / 255.0, float3(92, 98, 112) / 255.0, float3(130, 138, 154) / 255.0,
-  float3(172, 180, 194) / 255.0, float3(212, 218, 228) / 255.0,
-  // skin
-  float3(128, 76, 58) / 255.0, float3(180, 112, 82) / 255.0, float3(216, 152, 112) / 255.0,
-  float3(240, 192, 154) / 255.0, float3(220, 128, 110) / 255.0
-};
+// The palette is a row of PostProcess::PALETTE_SLOTS pixels, of which the first veil.w are used
+static const float PALETTE_SLOTS = 64.0;
+
+float3 palette_color(int i) {
+  return palette_tex.SampleLevel(palette_sampler, float2((float(i) + 0.5) / PALETTE_SLOTS, 0.5), 0).rgb;
+}
 
 static const float BAYER[16] = {
   0.0, 8.0, 2.0, 10.0,
@@ -112,12 +90,36 @@ float2 wave_offset(float2 p, float4 wave) {
   return d / max(dist, 0.001) * push * wave.w;
 }
 
+// Averages the solid pixels around p whose color is close to center's, so that the mottle of neighboring splats
+// evens out before the palette turns it into patches, while edges between different colors stay sharp
+float3 smooth_solid(float2 p, float2 size, float3 center) {
+  int radius = int(tint.w);
+  float3 sum = center;
+  float total = 1.0;
+  for (int dy = -radius; dy <= radius; dy++) {
+    for (int dx = -radius; dx <= radius; dx++) {
+      float4 other = texel(solid_tex, solid_sampler, p + float2(float(dx), float(dy)), size);
+      if ((dx != 0 || dy != 0) && other.a > SOLID_ALPHA) {
+        float3 color = other.rgb / other.a;
+        float3 d = color - center;
+        float weight = exp(-dot(d, d) * veil_color.w);
+        sum += color * weight;
+        total += weight;
+      }
+    }
+  }
+  return sum / total;
+}
+
 // Splats are alpha tested into hard pixel edges and get a dark outline against the background
 float3 composite(float2 p, float2 size) {
   float4 solid = texel(solid_tex, solid_sampler, p, size);
   float3 color;
   if (solid.a > SOLID_ALPHA) {
     color = solid.rgb / solid.a;
+    if (tint.w > 0.0) {
+      color = smooth_solid(p, size, color);
+    }
   } else {
     float neighbor = max(max(texel(solid_tex, solid_sampler, p + float2(1.0, 0.0), size).a,
                              texel(solid_tex, solid_sampler, p - float2(1.0, 0.0), size).a),
@@ -141,18 +143,20 @@ float color_distance(float3 a, float3 b) {
 float3 dither_to_palette(float3 color, float threshold, float strength) {
   float best = 1e9;
   float second = 1e9;
-  float3 best_color = PALETTE[0];
-  float3 second_color = PALETTE[0];
-  for (int i = 0; i < PALETTE_SIZE; i++) {
-    float d = color_distance(color, PALETTE[i]);
+  float3 best_color = palette_color(0);
+  float3 second_color = best_color;
+  int count = int(veil.w);
+  for (int i = 0; i < count; i++) {
+    float3 candidate = palette_color(i);
+    float d = color_distance(color, candidate);
     if (d < best) {
       second = best;
       second_color = best_color;
       best = d;
-      best_color = PALETTE[i];
+      best_color = candidate;
     } else if (d < second) {
       second = d;
-      second_color = PALETTE[i];
+      second_color = candidate;
     }
   }
   float3 span = second_color - best_color;
