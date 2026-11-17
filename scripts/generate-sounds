@@ -5,46 +5,510 @@
 require 'fileutils'
 
 RATE = 44_100
+TAU = 2 * Math::PI
 OUTPUT_DIR = File.expand_path('../mygame/sounds', __dir__)
+# The sounds the game plays looping: the end of each runs seamlessly into its start
+LOOPS = %i[pour ambience wave drone].freeze
 
 def main
   FileUtils.mkdir_p(OUTPUT_DIR)
   sounds.each do |name, samples|
-    path = File.join(OUTPUT_DIR, "#{name}.wav")
-    write_wav(path, normalize(samples))
-    puts "#{path} (#{(samples.length.to_f / RATE).round(2)}s)"
+    write_wav(File.join(OUTPUT_DIR, "#{name}.wav"), samples)
+    puts report(name, samples)
   end
 end
 
+# Loops are leveled by their loudness (RMS) at full gain, one-shots by their peak
 def sounds
-  { pop: pop }
+  {
+    pour: scale_to_rms(pour, 0.12),
+    ambience: scale_to_rms(ambience, 0.035),
+    wave: scale_to_rms(wave, 0.14),
+    supernova: normalize(supernova, peak: 0.9),
+    whoosh: normalize(whoosh, peak: 0.6),
+    splash: normalize(splash, peak: 0.5),
+    clink: normalize(clink, peak: 0.55),
+    tick: normalize(tick, peak: 0.45),
+    drone: scale_to_rms(drone, 0.05),
+    ending: normalize(ending, peak: 0.85)
+  }
 end
 
-# --- Sounds -----------------------------------------------------------------------------------------------
+# --- Sounds -------------------------------------------------------------------------------------------------
 
-# A burst: noise through a closing lowpass, over a short sine thump that drops in pitch
-def pop
-  noise = noise_source(1)
-  filter = lowpass
-  phase = 0.0
-  samples(0.35) do |t|
-    progress = t / 0.35
-    phase += exp_sweep(180.0, 60.0, progress) / RATE
-    thump = Math.sin(2 * Math::PI * phase) * Math.exp(-t * 18)
-    hiss = filter.call(noise.call, (0.6 * ((1 - progress)**2)) + 0.03)
-    saturate((thump + (hiss * 1.6)) * Math.exp(-t * 9), 1.4)
+# Steamed milk poured from a small steel pitcher: a smooth, mellow stream with soft bubbles trickling through it.
+# Neutral in pitch, as the game only changes its gain with the flow.
+def pour
+  stream_noise = noise_source(11)
+  stream = state_variable_filter(:band)
+  mellow = state_variable_filter(:low)
+  gurgle_noise = noise_source(12)
+  gurgle = state_variable_filter(:band)
+  sway = drift(13, 2.0)
+  flutter = drift(14, 9.0)
+  bubbles = bubble_source(15)
+  bubbling = drift(16, 1.2)
+  seamless_loop(2.5, crossfade: 0.5) do
+    swaying = sway.call
+    body = stream.call(stream_noise.call, 800.0 * (2.0**(0.4 * swaying)), 0.9)
+    body = mellow.call(body, 2200.0, 0.6) * (1.0 + (0.35 * flutter.call))
+    low = gurgle.call(gurgle_noise.call, 240.0, 1.5) * (1.0 - (0.4 * swaying))
+    trickle = bubbles.call(50.0 * (1.0 + (0.7 * bubbling.call)))
+    body + (0.9 * low) + (0.22 * trickle)
+  end
+end
+
+# Bubbles in liquid, about rate of them a second (the rate may change every sample)
+def bubble_source(seed)
+  random = Random.new(seed)
+  ringing = []
+  lambda do |rate|
+    ringing << bubble(random) if random.rand < rate / RATE
+    sample = 0.0
+    ringing.each do |pling|
+      sample += pling.shift
+    end
+    ringing.reject!(&:empty?)
+    sample
+  end
+end
+
+# One bubble: a soft sine ping that glides up in pitch as it rings out, bigger (lower) bubbles louder and longer
+def bubble(random)
+  hz = exp_sweep(500.0, 1800.0, random.rand)
+  size = Math.sqrt(700.0 / hz)
+  ring = 0.012 * size * (0.7 + (0.6 * random.rand))
+  rise = Math.log(1.15 + (0.35 * random.rand)) / (3.0 * ring)
+  level = size * (0.5 + (0.5 * random.rand))
+  samples(6.0 * ring) do |t|
+    phase = hz * (Math.exp(rise * t) - 1.0) / rise
+    level * sine(phase) * (1.0 - Math.exp(-t / 0.0015)) * Math.exp(-t / ring)
+  end
+end
+
+# A calm late afternoon on the terrace: a soft breeze through the grass, and now and then a distant bird
+def ambience
+  mix(scale_to_rms(breeze(14.0), 1.0), normalize(distant_birds(14.0), peak: 1.5))
+end
+
+# Wind through grass: a soft hush that gusts and settles slowly, with a rustle on top that grows with the gusts
+def breeze(seconds)
+  noise = noise_source(21)
+  rustle_noise = noise_source(22)
+  grass = state_variable_filter(:band)
+  leaves = state_variable_filter(:band)
+  distance = state_variable_filter(:low)
+  unrest = drift(23, 0.4)
+  seamless_loop(seconds, crossfade: 3.0, warmup: 3.0) do |t|
+    turn = TAU * t / seconds
+    gust = 0.55 + (0.25 * Math.sin(turn)) + (0.12 * Math.sin((3 * turn) + 1.3)) + (0.15 * unrest.call)
+    gust = gust.clamp(0.05, 1.0)
+    body = grass.call(noise.call, exp_sweep(350.0, 900.0, gust), 0.6) * gust
+    rustle = leaves.call(rustle_noise.call, 2200.0, 0.8) * gust * gust
+    distance.call(body + (0.12 * rustle), 2800.0, 0.6)
+  end
+end
+
+# A few birds singing far off: sweet chirps and a trill, softened and blurred by the distance
+def distant_birds(seconds)
+  notes = birdsong
+  space = reverb(1.8, damping: 0.5)
+  soften = lowpass
+  seamless_loop(seconds, warmup: 3.0) do |t|
+    song = notes.sum { |start, length, from, to, gain| gain * chirp((t - start) % seconds, length, from, to) }
+    soften.call((0.5 * song) + space.call(song), cutoff(5000.0))
+  end
+end
+
+# The birds' notes in the ambience loop: start and length in seconds, the pitch they glide from and to, gain
+def birdsong
+  [
+    [1.6, 0.16, 3900.0, 4700.0, 0.7], [1.82, 0.28, 4500.0, 3300.0, 1.0],
+    *Array.new(6) { |i| [5.3 + (0.075 * i), 0.05, 5200.0, 4300.0, 0.8 - (0.06 * i)] },
+    [8.8, 0.07, 2900.0, 4600.0, 0.8], [8.97, 0.08, 3000.0, 4900.0, 0.65],
+    [11.9, 0.32, 3600.0, 3450.0, 0.75], [12.3, 0.09, 4300.0, 3700.0, 0.55], [12.46, 0.09, 4300.0, 3700.0, 0.45]
+  ]
+end
+
+# The wall of light rolling across the meadow: a deep, airy rush that slowly swells and eases, over a soft rumble.
+# Calm at any gain: dark noise that opens up only a little at the top of each swell.
+def wave
+  noise = noise_source(31)
+  air_noise = noise_source(32)
+  rumble_noise = noise_source(33)
+  rush = state_variable_filter(:low)
+  warmth = state_variable_filter(:low)
+  unboom = state_variable_filter(:high)
+  air = state_variable_filter(:band)
+  unhiss = state_variable_filter(:low)
+  rumble = state_variable_filter(:band)
+  surge = drift(34, 0.7)
+  seamless_loop(6.0, crossfade: 1.5, warmup: 3.0) do |t|
+    turn = TAU * t / 6.0
+    swell = (0.75 * (0.5 - (0.5 * Math.cos(turn)))) + (0.25 * (0.5 + (0.5 * Math.sin((2 * turn) + 0.9))))
+    swell = (swell + (0.12 * surge.call)).clamp(0.0, 1.0)
+    hz = exp_sweep(300.0, 1100.0, swell)
+    body = unboom.call(warmth.call(rush.call(noise.call, hz, 0.6), hz * 1.6, 0.6), 70.0, 0.6) * (0.6 + (0.4 * swell))
+    sheen = unhiss.call(air.call(air_noise.call, 2.2 * hz, 0.5), 3500.0, 0.6) * swell
+    body + (0.1 * sheen) + (1.2 * rumble.call(rumble_noise.call, 48.0, 0.8))
+  end
+end
+
+# The sun bursting, peacefully: a deep bloom swells up under a high shimmer that rises from one note into a wide
+# D major chord, spreads and rings out
+def supernova
+  depth_noise = noise_source(41)
+  depth_filter = state_variable_filter(:band)
+  air_noise = noise_source(42)
+  air = state_variable_filter(:band)
+  # D6, F#6, A6, D7 and E7
+  voices = [[17, 1.0], [21, 0.8], [24, 0.7], [29, 0.45], [31, 0.3]].each_with_index.map { |(semitones, gain), i|
+    shimmer_voice(pitch(semitones), gain, 4.7 + (0.9 * i))
+  }
+  space = reverb(3.5, damping: 0.4)
+  sub_phase = 0.0
+  sound = samples(6.0) { |t|
+    bloom = smoothstep(0.0, 0.35, t) * Math.exp(-[t - 0.35, 0.0].max / 1.3)
+    sub_phase += exp_sweep(58.0, 40.0, t / 3.0) / RATE
+    sub = (sine(sub_phase) + (0.3 * sine(2 * sub_phase)) + (0.12 * sine(3 * sub_phase))) * bloom
+    depth = depth_filter.call(depth_noise.call, 90.0, 0.6) * bloom
+    breath = air.call(air_noise.call, 5000.0, 0.8) * smoothstep(0.3, 2.0, t) * Math.exp(-t / 2.5)
+    light = (0.15 * voices.sum { |voice| voice.call(t) }) + (0.03 * breath)
+    sub + (2.0 * depth) + (0.45 * light) + (0.6 * space.call(light + (0.5 * depth)))
+  }
+  fade_out(sound, 1.0)
+end
+
+# One voice of the supernova's shimmer: it rises from A5 to its own note of the chord while it trembles and its
+# chorus spreads
+def shimmer_voice(target, gain, tremolo)
+  phases = [0.0, 0.0, 0.0]
+  lambda do |t|
+    hz = exp_sweep(pitch(12), target, smoothstep(0.25, 2.8, t))
+    spread = 0.005 * smoothstep(0.3, 3.0, t)
+    phases[0] += hz / RATE
+    phases[1] += hz * (1.0 + spread) / RATE
+    phases[2] += hz * (1.0 - (1.3 * spread)) / RATE
+    level = smoothstep(0.15, 1.5, t) * Math.exp(-[t - 1.5, 0.0].max / 1.6) * (1.0 + (0.3 * Math.sin(TAU * tremolo * t)))
+    gain * level * (sine(phases[0]) + (0.6 * sine(phases[1])) + (0.6 * sine(phases[2])))
+  end
+end
+
+# A soft swoosh of air: noise through a band that sweeps up and back down as it swells and fades
+def whoosh
+  noise = noise_source(51)
+  low_band = state_variable_filter(:band)
+  high_band = state_variable_filter(:band)
+  soften = lowpass
+  samples(1.4) do |t|
+    level = bell(t, 0.55, 1.4)
+    hz = exp_sweep(320.0, 1500.0, level)
+    sample = noise.call
+    swoosh = low_band.call(sample, hz, 1.1) + (0.35 * high_band.call(sample, hz * 1.8, 1.4))
+    soften.call(swoosh, cutoff(3000.0)) * level
+  end
+end
+
+# A few drops of milk landing on the saucer: small soft taps, each with a wet little ping
+def splash
+  random = Random.new(61)
+  drops = [[0.0, 1.0], [0.034, 0.5], [0.078, 0.7], [0.135, 0.35]].map { |start, gain| [start, drop(random, gain)] }
+  soften = lowpass
+  fade_out(arrange(0.3, drops).map { |sample| soften.call(sample, cutoff(3500.0)) }, 0.03)
+end
+
+# One drop: a tap of filtered noise and the quick rising ping of the liquid, both gone within a few hundredths of a
+# second
+def drop(random, gain)
+  noise = noise_source(random.rand(1_000_000))
+  tap = state_variable_filter(:band)
+  tap_hz = exp_sweep(1300.0, 2600.0, random.rand)
+  ping_hz = exp_sweep(1100.0, 2000.0, random.rand)
+  samples(0.12) do |t|
+    onset = 1.0 - Math.exp(-t / 0.0006)
+    splat = tap.call(noise.call, tap_hz, 1.2) * Math.exp(-t / 0.006)
+    ping = sine(ping_hz * t * (1.0 + (4.0 * t))) * Math.exp(-t / 0.018)
+    gain * onset * ((2.0 * splat) + (0.35 * ping))
+  end
+end
+
+# A porcelain cup set on its porcelain saucer: a gentle ceramic ring over a tiny knock, and a softer second touch as
+# it settles
+def clink
+  soften = lowpass
+  sound = arrange(0.8, [[0.0, porcelain_touch(71, 1.0)], [0.041, porcelain_touch(72, 0.28)]])
+  fade_out(sound.map { |sample| soften.call(sample, cutoff(7000.0)) }, 0.25)
+end
+
+# Porcelain touching porcelain once: inharmonic partials, each a pair of close modes that beat as they decay
+def porcelain_touch(seed, gain)
+  # Hz, level, decay in seconds, how fast the pair beats
+  partials = [
+    [2210.0, 1.0, 0.24, 2.3], [3080.0, 0.7, 0.17, 3.7], [3890.0, 0.5, 0.12, 5.1], [4720.0, 0.3, 0.08, 6.6],
+    [5630.0, 0.15, 0.05, 8.2]
+  ]
+  noise = noise_source(seed)
+  knock_filter = state_variable_filter(:low)
+  samples(0.8) do |t|
+    onset = 1.0 - Math.exp(-t / 0.0005)
+    ring = partials.sum { |hz, level, decay, beat|
+      level * Math.exp(-t / decay) * (sine(hz * t) + (0.35 * sine((hz + beat) * t)))
+    }
+    knock = (0.5 * sine(190.0 * t) * Math.exp(-t / 0.012)) +
+            (knock_filter.call(noise.call, 1200.0, 0.7) * Math.exp(-t / 0.004))
+    gain * onset * ((0.5 * ring) + knock)
+  end
+end
+
+# A soft wooden tick for buttons: a little knock on a wooden block
+def tick
+  noise = noise_source(81)
+  tap = state_variable_filter(:band)
+  sound = samples(0.1) { |t|
+    onset = 1.0 - Math.exp(-t / 0.0005)
+    wood = (sine(920.0 * t) * Math.exp(-t / 0.014)) + (0.45 * sine(2380.0 * t) * Math.exp(-t / 0.007)) +
+           (0.15 * sine(3950.0 * t) * Math.exp(-t / 0.004))
+    onset * (wood + (0.8 * tap.call(noise.call, 1800.0, 1.0) * Math.exp(-t / 0.003)))
+  }
+  fade_out(sound, 0.03)
+end
+
+# The music bed under the play: a quiet, warm pad on D major add9 whose voices swell and ease each at its own pace
+def drone
+  seconds = 16.0
+  voices = [
+    [-31, 0.4, 1, 0.0],   # D2
+    [-24, 0.35, 2, 2.1],  # A2
+    [-19, 0.45, 1, 4.0],  # D3
+    [-15, 0.35, 3, 1.0],  # F#3
+    [-12, 0.3, 2, 5.2],   # A3
+    [-5, 0.25, 3, 3.3],   # E4, the added ninth
+    [-3, 0.18, 1, 0.5],   # F#4
+    [0, 0.12, 2, 2.8]     # A4
+  ].map { |semitones, gain, swells, offset| drone_voice(pitch(semitones), gain, swells, offset, seconds) }
+  space = reverb(3.0, damping: 0.5)
+  seamless_loop(seconds, warmup: 6.0) do |t|
+    pad = voices.sum { |voice| voice.call(t) }
+    (0.7 * pad) + (0.3 * space.call(pad))
+  end
+end
+
+# One voice of the drone, its volume swelling `swells` times a loop. All its frequencies are whole cycles per loop,
+# so it repeats exactly.
+def drone_voice(frequency, gain, swells, offset, seconds)
+  center = loop_pitch(frequency, seconds)
+  above = loop_pitch(frequency * 1.0022, seconds)
+  below = loop_pitch(frequency * 0.9965, seconds)
+  lambda do |t|
+    swell = 0.6 + (0.4 * Math.sin((TAU * swells * t / seconds) + offset))
+    gain * swell * chorus(center * t, above * t, below * t)
+  end
+end
+
+# The ending: he drinks, content, and everything goes white. A warm D major chord swells in, its suspended fourth
+# settling onto the third, a soft high shimmer blooms over it, and it all fades gently away.
+def ending
+  voices = [
+    [-31, -31, 0.5],  # D2
+    [-24, -24, 0.45], # A2
+    [-19, -19, 0.5],  # D3
+    [-12, -12, 0.4],  # A3
+    [-7, -7, 0.35],   # D4
+    [-2, -3, 0.32],   # G4 settling onto F#4
+    [0, 0, 0.25],     # A4
+    [5, 5, 0.14],     # D5
+    [7, 7, 0.1]       # E5, the added ninth
+  ].map { |from, to, gain| ending_voice(pitch(from), pitch(to), gain) }
+  # D6, F#6, A6 and E7: pitch, gain, tremolo
+  glints = [[17, 0.5, 4.6], [21, 0.4, 5.3], [24, 0.32, 6.1], [31, 0.15, 6.8]].map { |semitones, gain, tremolo|
+    [pitch(semitones), gain, tremolo]
+  }
+  noise = noise_source(91)
+  air = state_variable_filter(:band)
+  space = reverb(4.0, damping: 0.45)
+  sound = samples(12.0) { |t|
+    level = smoothstep(0.0, 3.2, t) * Math.exp(-[t - 5.5, 0.0].max / 2.2)
+    chord = voices.sum { |voice| voice.call(t) } * level
+    bloom = smoothstep(2.0, 5.0, t) * Math.exp(-[t - 5.0, 0.0].max / 1.8)
+    glow = glints.sum { |hz, gain, tremolo| gain * sine(hz * t) * (1.0 + (0.3 * Math.sin(TAU * tremolo * t))) }
+    light = bloom * (glow + (0.06 * air.call(noise.call, 4500.0, 0.7)))
+    (0.8 * chord) + (0.2 * light) + space.call((0.25 * chord) + (0.35 * light))
+  }
+  fade_out(sound, 2.5)
+end
+
+# One voice of the ending chord, gliding from one pitch to another between 2.4 and 3.4 seconds
+def ending_voice(start_hz, end_hz, gain)
+  phases = [0.0, 0.0, 0.0]
+  lambda do |t|
+    hz = exp_sweep(start_hz, end_hz, smoothstep(2.4, 3.4, t))
+    phases[0] += hz / RATE
+    phases[1] += hz * 1.0022 / RATE
+    phases[2] += hz * 0.9965 / RATE
+    gain * chorus(*phases)
   end
 end
 
 # --- Building blocks ----------------------------------------------------------------------------------------
 
+# Samples for a loop of the given length whose end runs seamlessly into its start. The block gets the time in the
+# loop, negative during a warmup that lets filters settle, so motion that repeats a whole number of times per loop
+# stays in step. Random sound runs on past the end for the crossfade, and that fades into the start at equal power.
+def seamless_loop(seconds, crossfade: 0.0, warmup: 1.0, &block)
+  length = (seconds * RATE).round
+  overlap = (crossfade * RATE).round
+  skipped = (warmup * RATE).round
+  run = Array.new(skipped + length + overlap) { |i| block.call((i - skipped).to_f / RATE) }.drop(skipped)
+  Array.new(length) do |i|
+    next run[i] if i >= overlap
+
+    angle = Math::PI / 2 * i / overlap
+    (run[i] * Math.sin(angle)) + (run[length + i] * Math.cos(angle))
+  end
+end
+
 def samples(seconds, &block)
   Array.new((seconds * RATE).round) { |i| block.call(i.to_f / RATE) }
+end
+
+# Lays clips of samples out on a track of the given length, each at its start time in seconds
+def arrange(seconds, clips)
+  track = Array.new((seconds * RATE).round, 0.0)
+  clips.each do |start, clip|
+    offset = (start * RATE).round
+    clip.each_with_index { |sample, i| track[offset + i] += sample if offset + i < track.length }
+  end
+  track
+end
+
+def mix(*tracks)
+  tracks.transpose.map(&:sum)
+end
+
+# A pure tone gliding exponentially from one pitch to another, swelling in and out over its length; silent outside
+# 0..length seconds
+def chirp(t, length, start_hz, end_hz)
+  return 0.0 unless t.between?(0.0, length)
+
+  rate = Math.log(end_hz / start_hz) / length
+  phase = rate.abs < 1e-9 ? start_hz * t : start_hz * (Math.exp(rate * t) - 1.0) / rate
+  sine(phase) * (Math.sin(Math::PI * t / length)**2)
+end
+
+# A warm, slowly beating tone from three phases in cycles: the first carries a little second and third harmonic,
+# the other two are slightly detuned from it
+def chorus(center, above, below)
+  sine(center) + (0.12 * sine(2 * center)) + (0.04 * sine(3 * center)) + (0.45 * sine(above)) + (0.4 * sine(below))
+end
+
+def sine(phase)
+  Math.sin(TAU * phase)
+end
+
+# The frequency in Hz of the note the given number of semitones above A4
+def pitch(semitones)
+  440.0 * (2.0**(semitones / 12.0))
+end
+
+# The nearest frequency with a whole number of cycles in a loop of the given length
+def loop_pitch(frequency, seconds)
+  (frequency * seconds).round / seconds
+end
+
+# Swells from silence to 1 at peak seconds, then falls back to silence at length seconds
+def bell(t, peak, length)
+  return Math.sin(Math::PI / 2 * t / peak)**2 if t < peak
+
+  Math.cos(Math::PI / 2 * ((t - peak) / (length - peak)).clamp(0.0, 1.0))**2
+end
+
+# 0 up to start, 1 from finish on, easing in and out in between
+def smoothstep(start, finish, value)
+  progress = ((value - start) / (finish - start)).clamp(0.0, 1.0)
+  progress * progress * (3.0 - (2.0 * progress))
+end
+
+# Fades the last seconds out to silence
+def fade_out(samples, seconds)
+  count = (seconds * RATE).round
+  start = samples.length - count
+  samples.each_with_index.map do |sample, i|
+    i < start ? sample : sample * (Math.cos(Math::PI / 2 * (i - start + 1) / count)**2)
+  end
+end
+
+# Smooth random wandering around 0, mostly between -1 and 1, that turns about frequency times a second
+def drift(seed, frequency)
+  noise = noise_source(seed)
+  first = lowpass
+  second = lowpass
+  amount = cutoff(frequency)
+  scale = Math.sqrt(1.5 / amount)
+  -> { second.call(first.call(noise.call, amount), amount) * scale }
 end
 
 def noise_source(seed)
   random = Random.new(seed)
   -> { (random.rand * 2.0) - 1.0 }
+end
+
+# Schroeder reverb: damped combs in parallel into allpasses (Freeverb's tunings). Returns only the reverberated
+# sound, at roughly the loudness of the input; decay is the time it takes to fall by 60 dB.
+def reverb(decay, damping:)
+  combs = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617].map { |length| comb(length, decay, damping) }
+  allpasses = [556, 441, 341, 225].map { |length| allpass(length) }
+  lambda do |input|
+    wet = combs.sum { |filter| filter.call(input) } / 4.0
+    allpasses.reduce(wet) { |signal, filter| filter.call(signal) }
+  end
+end
+
+# Feedback comb whose echoes lose their highs by damping (0 to 1) each time round
+def comb(length, decay, damping)
+  buffer = Array.new(length, 0.0)
+  index = 0
+  feedback = 10.0**(-3.0 * length / (decay * RATE))
+  damped = 0.0
+  lambda do |input|
+    output = buffer[index]
+    damped += (output - damped) * (1.0 - damping)
+    buffer[index] = input + (damped * feedback)
+    index = (index + 1) % length
+    output
+  end
+end
+
+# Schroeder allpass: smears echoes in time without changing the loudness of any frequency
+def allpass(length)
+  buffer = Array.new(length, 0.0)
+  index = 0
+  lambda do |input|
+    delayed = buffer[index]
+    fed_back = input + (0.5 * delayed)
+    buffer[index] = fed_back
+    index = (index + 1) % length
+    delayed - (0.5 * fed_back)
+  end
+end
+
+# Two-pole state variable filter that stays stable while its frequency moves (topology-preserving transform).
+# Mode :low or :high passes below or above hz, :band passes around it at unit gain; q 0.7 is smooth, more rings.
+def state_variable_filter(mode)
+  band_state = 0.0
+  low_state = 0.0
+  lambda do |input, hz, q|
+    g = Math.tan(Math::PI * hz.clamp(1.0, RATE * 0.45) / RATE)
+    k = 1.0 / q
+    band = (band_state + (g * (input - low_state))) / (1.0 + (g * (g + k)))
+    low = low_state + (g * band)
+    band_state = (2.0 * band) - band_state
+    low_state = (2.0 * low) - low_state
+    case mode
+    when :low then low
+    when :band then k * band
+    else input - (k * band) - low
+    end
+  end
 end
 
 # One-pole lowpass; amount is the per-sample smoothing factor between 0 and 1
@@ -53,20 +517,18 @@ def lowpass
   ->(input, amount) { state += (input - state) * amount.clamp(0.0, 1.0) }
 end
 
+# The lowpass amount for a cutoff frequency in Hz
+def cutoff(frequency)
+  1.0 - Math.exp(-TAU * frequency / RATE)
+end
+
 def exp_sweep(start, finish, progress)
   start * ((finish / start)**progress.clamp(0.0, 1.0))
 end
 
-def square(phase)
-  (phase % 1.0) < 0.5 ? 1.0 : -1.0
-end
-
-def saw(phase)
-  ((phase % 1.0) * 2.0) - 1.0
-end
-
-def saturate(value, drive)
-  Math.tanh(value * drive) / Math.tanh(drive)
+def scale_to_rms(samples, target)
+  gain = target / rms(samples)
+  samples.map { |sample| sample * gain }
 end
 
 def normalize(samples, peak: 0.9)
@@ -74,6 +536,19 @@ def normalize(samples, peak: 0.9)
   return samples if loudest.zero?
 
   samples.map { |sample| sample / loudest * peak }
+end
+
+# Length, peak and loudness of a sound, and for loops the jump where their end runs into their start
+def report(name, samples)
+  line = format('%<name>-10s %<seconds>5.2f s  peak %<peak>.3f  rms %<rms>.4f',
+                name: name, seconds: samples.length.to_f / RATE, peak: samples.map(&:abs).max, rms: rms(samples))
+  return line unless LOOPS.include?(name)
+
+  format('%<line>s  |last - first| %<seam>.5f', line: line, seam: (samples.last - samples.first).abs)
+end
+
+def rms(samples)
+  Math.sqrt(samples.sum { |sample| sample * sample } / samples.length)
 end
 
 def write_wav(path, samples)
