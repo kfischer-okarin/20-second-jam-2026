@@ -9,6 +9,9 @@ module Textures
     radial(args, :disc, 32) do |distance_squared|
       disc(distance_squared)
     end
+    radial(args, :hard, 32) do |distance_squared|
+      hard(distance_squared)
+    end
     radial(args, :ring, 96) do |distance_squared|
       ring(Math.sqrt(distance_squared))
     end
@@ -43,6 +46,13 @@ module Textures
     return 0.0 if d >= 1.0
 
     t = ((1.0 - d) / 0.6).clamp(0.0, 1.0)
+    t * t * (3.0 - (2.0 * t))
+  end
+
+  # A gaussian cut off sharply where it falls to about half: a crisp ellipse a little less than half as wide as
+  # the sprite, so neighbouring splats meet without blending into each other
+  def hard(distance_squared)
+    t = ((Math.exp(-4.5 * distance_squared) - 0.32) / 0.2).clamp(0.0, 1.0)
     t * t * (3.0 - (2.0 * t))
   end
 
