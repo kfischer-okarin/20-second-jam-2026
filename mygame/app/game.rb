@@ -40,6 +40,7 @@ class Game
     EndingModels.prepare
     @autopilot = nil
     @time = 0.0
+    @style = Styles.default
     start_title
     @boot_ms = ((Time.now.to_f - started) * 1000).round
   end
@@ -80,8 +81,26 @@ class Game
 
   private
 
+  # The style lab: the cup with a poured heart, the pitcher and the moka pot in the afternoon light, in one of
+  # the Styles after the other
+  def start_lab
+    @terrace.view.tilt = 0.0
+    @terrace.light_progress = 0.2
+    pour_heart
+    @terrace.pitcher.put_down
+    enter(:lab)
+  end
+
+  # Shows the style at index (wrapping around) in the lab and in the game
+  def show_style(index)
+    @style_index = index % Styles::ALL.length
+    @style = Styles::ALL[@style_index]
+    @terrace.style = @style
+  end
+
   def start_title
     @terrace = Terrace.new
+    @terrace.style = @style
     @terrace.view.tilt = TITLE_TILT
     @hover = false
     enter(:title)
@@ -122,6 +141,27 @@ class Game
 
     hide ? $gtk.hide_cursor : $gtk.show_cursor
     @cursor_hidden = hide
+  end
+
+  # --- Style lab -----------------------------------------------------------------------------------------------
+
+  def enter_lab
+    show_style(@style_index || 0)
+  end
+
+  # Left and right step through the styles
+  def update_lab(_dt, inputs)
+    @terrace.light_progress = 0.0
+    keyboard = inputs.keyboard.key_down
+    controller = inputs.controller_one.key_down
+    show_style(@style_index + 1) if keyboard.right || controller.right
+    show_style(@style_index - 1) if keyboard.left || controller.left
+  end
+
+  def lab_hud(primitives)
+    name = "#{@style_index + 1}/#{Styles::ALL.length} #{@style[:name]}"
+    PixelFont.draw(primitives, name, 6, 170, color: LIGHT_TEXT, outline: TEXT)
+    PixelFont.draw(primitives, 'LEFT RIGHT', 314, 170, color: LIGHT_TEXT, align: :right, outline: TEXT)
   end
 
   # --- Title ---------------------------------------------------------------------------------------------------
@@ -319,13 +359,14 @@ class Game
     post.flash_color = @camera.flash_color
     post.aberration = @camera.aberration
     post.background_color = World.sky_color(1.0, progress * 0.5).map(&:round)
-    post.bloom = 0.75 + (progress * 0.25)
+    post.bloom = @style[:bloom] + (progress * 0.25)
     post.bright_threshold = 0.78 - (progress * 0.06)
     post.vignette = 0.3
     post.exposure = 1.0 + (progress * 0.08)
     post.saturation = 1.08
-    # A clean look: every pixel takes its nearest palette color, and objects have no outlines
-    post.dither = 0.0
+    post.palette = @style[:palette]
+    post.dither = @style[:dither]
+    post.smooth = @style.fetch(:smooth, 0)
     post.outline = 0.0
     post.shadow_tint = 0.35
     post.shadow_tint_color = [0.08, 0.04, 0.12]
@@ -354,6 +395,7 @@ class Game
     primitives = []
     title_hud(primitives) if %i[title launch white].include?(@state)
     hint_hud(primitives) if @state == :play
+    lab_hud(primitives) if @state == :lab
     afterimage(primitives) if @state == :white
     primitives
   end

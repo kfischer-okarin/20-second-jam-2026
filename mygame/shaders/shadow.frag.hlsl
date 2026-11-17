@@ -16,10 +16,21 @@ struct Output {
   float4 frag_color : SV_Target;
 };
 
+float coverage_at(float2 uv) {
+  return coverage_tex.SampleLevel(coverage_sampler, uv, 0).a;
+}
+
+// Averages the coverage with its neighbors first, so that a shadow cast by sparse splats comes out whole
 Output main(Input input) {
   Output output;
-  float coverage = coverage_tex.SampleLevel(coverage_sampler, input.tex_coord, 0).a;
-  float a = smoothstep(0.2, 0.5, coverage) * shadow.a;
+  float2 size;
+  coverage_tex.GetDimensions(size.x, size.y);
+  float2 step_uv = 1.5 / size;
+  float2 uv = input.tex_coord;
+  float coverage = (coverage_at(uv) * 2.0 + coverage_at(uv + float2(step_uv.x, 0.0)) +
+                    coverage_at(uv - float2(step_uv.x, 0.0)) + coverage_at(uv + float2(0.0, step_uv.y)) +
+                    coverage_at(uv - float2(0.0, step_uv.y))) / 6.0;
+  float a = smoothstep(0.15, 0.4, coverage) * shadow.a;
   output.frag_color = float4(shadow.rgb * a, a);
   return output;
 }

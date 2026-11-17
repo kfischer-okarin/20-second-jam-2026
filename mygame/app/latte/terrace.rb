@@ -12,7 +12,7 @@ class Terrace
   SUN_HIGH = 0.68
   SUN_LOW = 0.13
 
-  attr_reader :view, :coffee, :pitcher, :spills, :world, :cup_offset, :light
+  attr_reader :view, :coffee, :pitcher, :spills, :world, :cup_offset, :light, :style
   # progress of the light: 0 before the supernova, 1 when the wave reached the table, 2 at the cup
   attr_accessor :light_progress, :cup_glow, :cup_lift, :flash, :hidden
 
@@ -43,11 +43,20 @@ class Terrace
     @pour_gain = 0.0
     @splash_at = nil
     @splash_sound = 0.0
+    self.style = Styles.default
     update_light
   end
 
   # How loud the pour is (0..1), and whether milk just splashed somewhere it should not
   attr_reader :pour_gain, :splash_sound
+
+  # Ink lines around the objects and cel shading on them, see Styles
+  def style=(style)
+    @style = style
+    %i[saucer cup moka pitcher].each do |name|
+      @batches[name].ink = style[:ink]
+    end
+  end
 
   def update(dt, controls)
     @time += dt
@@ -208,7 +217,7 @@ class Terrace
   # only when the view or the light changed noticeably
   def render_static
     key = [@view.pitch.round(3), @view.height.round(2), (@light_progress * 30).round, @cup_glow.round(2), @cup_lift,
-           @flash.round(2)]
+           @flash.round(2), @style[:name]]
     return if key == @static_key
 
     @static_key = key
@@ -232,7 +241,8 @@ class Terrace
     sx, sy, scale, elevation = name == :cup ? cup_frame : @view.point(*position)
     matrix = Rot3.mul(Rot3.rot_x(elevation), rotation)
     flash = name == :cup ? @flash + (@cup_glow * 0.15) : @flash
-    SplatRenderer.render(batch, @models[name], matrix, sx, sy, 0.0, scale, light_for(elevation), flash: flash)
+    SplatRenderer.render(batch, @models[name], matrix, sx, sy, 0.0, scale, light_for(elevation),
+                         flash: flash, bands: @style[:bands], reflect: @style.fetch(:gloss, 1.0))
   end
 
   def render_pitcher
@@ -242,7 +252,8 @@ class Terrace
 
     sx, sy, scale, elevation = @view.point(@pitcher.x, @pitcher.y, @pitcher.z)
     matrix = Rot3.mul(Rot3.rot_x(elevation), @pitcher.rotation)
-    SplatRenderer.render(batch, @models[:pitcher], matrix, sx, sy, 0.0, scale, light_for(elevation), flash: @flash)
+    SplatRenderer.render(batch, @models[:pitcher], matrix, sx, sy, 0.0, scale, light_for(elevation),
+                         flash: @flash, bands: @style[:bands], reflect: @style.fetch(:gloss, 1.0))
   end
 
   # The stream from the spout down through the falling parcels, cut off where the cup's rim hides it

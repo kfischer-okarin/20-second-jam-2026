@@ -24,7 +24,7 @@ class Shadows
       zs << model.pz[i]
       i += stride
     end
-    [xs, ys, zs, spacing * Math.sqrt(stride) * 1.9, coffee]
+    [xs, ys, zs, spacing * Math.sqrt(stride) * 2.6, coffee]
   end
 
   def initialize
