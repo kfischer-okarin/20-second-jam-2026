@@ -17,11 +17,13 @@ module GameCli
   # art, face     the ending, after a heart
   # white         the white and the title coming back
   # lab           the style lab: the set pieces in one look after the other (left and right)
+  # render_lab    the render lab: the set pieces drawn in one way after the other (left and right, L for light)
   def self.setup(name)
     game = Game.current
     case name
     when :play then game.skip_to_play
     when :lab then game.start_lab
+    when :render_lab then game.start_render_lab
     when :heart, :rosetta, :spill
       game.autopilot = Autopilot.new(name)
       game.skip_to_play

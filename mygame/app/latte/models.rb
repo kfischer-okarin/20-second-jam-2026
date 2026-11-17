@@ -8,33 +8,36 @@ module Models
   BAKELITE = [40, 34, 42].freeze
   MILK = [250, 246, 236].freeze
 
+  # How each model is baked: the method with its parts, its bounds, splat spacing, seed, and which splats it keeps
+  BAKES = {
+    cup: [:cup_parts, [-7.6, -0.2, -5.6, 5.6, 6.4, 5.6], 0.3, 11, ->(x, y, z) { Cup.visible_surface?(x, y, z) }],
+    saucer: [:saucer_parts, [-8.0, -0.2, -8.0, 8.0, 1.4, 8.0], 0.38, 12,
+             ->(x, y, z) { y > 0.2 && (x * x) + (z * z) > 4.0 }],
+    pitcher: [:pitcher_parts, [-0.6, -6.6, -3.0, 8.4, 0.6, 3.0], 0.28, 13,
+              ->(x, y, z) { Pitcher.visible_surface?(x, y, z) }],
+    moka_pot: [:moka_pot_parts, [-4.4, -0.2, -3.2, 5.4, 9.8, 3.2], 0.3, 14, nil]
+  }.freeze
+
   extend self
 
-  def cup
-    ModelCache.fetch(:cup) do
-      SdfBaker.bake(cup_parts, bounds: [-7.6, -0.2, -5.6, 5.6, 6.4, 5.6], spacing: 0.3, size: 0.9, seed: 11,
-                               keep: ->(x, y, z) { Cup.visible_surface?(x, y, z) })
-    end
+  def cup = model(:cup)
+  def saucer = model(:saucer)
+  def pitcher = model(:pitcher)
+  def moka_pot = model(:moka_pot)
+
+  def model(name)
+    ModelCache.fetch(name) { bake(name) }
   end
 
-  def saucer
-    ModelCache.fetch(:saucer) do
-      SdfBaker.bake(saucer_parts, bounds: [-8.0, -0.2, -8.0, 8.0, 1.4, 8.0], spacing: 0.38, size: 1.15, seed: 12,
-                                  keep: ->(x, y, z) { y > 0.2 && (x * x) + (z * z) > 4.0 })
-    end
+  # The same model with splats closer together by detail (0.5: twice as close, four times as many)
+  def fine(name, detail)
+    ModelCache.fetch(:"#{name}_#{detail}") { bake(name, detail) }
   end
 
-  def pitcher
-    ModelCache.fetch(:pitcher) do
-      SdfBaker.bake(pitcher_parts, bounds: [-0.6, -6.6, -3.0, 8.4, 0.6, 3.0], spacing: 0.28, size: 0.84, seed: 13,
-                                   keep: ->(x, y, z) { Pitcher.visible_surface?(x, y, z) })
-    end
-  end
-
-  def moka_pot
-    ModelCache.fetch(:moka_pot) do
-      SdfBaker.bake(moka_pot_parts, bounds: [-4.4, -0.2, -3.2, 5.4, 9.8, 3.2], spacing: 0.3, size: 0.9, seed: 14)
-    end
+  def bake(name, detail = 1.0)
+    parts, bounds, spacing, seed, keep = BAKES.fetch(name)
+    spacing *= detail
+    SdfBaker.bake(send(parts), bounds: bounds, spacing: spacing, size: spacing * 3.0, seed: seed, keep: keep)
   end
 
   # A footed latte bowl with its handle on the left, glazed outside and white inside. Its foot stands on y = 0.

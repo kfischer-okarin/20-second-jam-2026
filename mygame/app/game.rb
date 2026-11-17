@@ -91,6 +91,14 @@ class Game
     enter(:lab)
   end
 
+  # The render lab (see RenderLab): the set pieces drawn in one way after the other
+  def start_render_lab
+    @terrace.view.tilt = 0.0
+    pour_heart
+    @render_lab = RenderLab.new(@terrace.coffee)
+    enter(:render_lab)
+  end
+
   # Shows the style at index (wrapping around) in the lab and in the game
   def show_style(index)
     @style_index = index % Styles::ALL.length
@@ -129,7 +137,7 @@ class Game
     @mouse = args.inputs.mouse
     @keyboard = args.inputs.keyboard
     send(:"update_#{@state}", dt, args.inputs)
-    @terrace.update(dt, controls) unless @state == :face
+    @terrace.update(dt, controls) unless %i[face render_lab].include?(@state)
     update_sound
     update_cursor
   end
@@ -156,6 +164,20 @@ class Game
     controller = inputs.controller_one.key_down
     show_style(@style_index + 1) if keyboard.right || controller.right
     show_style(@style_index - 1) if keyboard.left || controller.left
+  end
+
+  # Left and right step through the ways of drawing, L switches between the key light and the game's backlight
+  def update_render_lab(_dt, inputs)
+    keyboard = inputs.keyboard.key_down
+    controller = inputs.controller_one.key_down
+    @render_lab.step(1) if keyboard.right || controller.right
+    @render_lab.step(-1) if keyboard.left || controller.left
+    @render_lab.toggle_light if keyboard.l || controller.a
+  end
+
+  def render_lab_hud(primitives)
+    PixelFont.draw(primitives, @render_lab.label, 6, 170, color: LIGHT_TEXT, outline: TEXT)
+    PixelFont.draw(primitives, 'LEFT RIGHT  L LIGHT', 314, 4, color: LIGHT_TEXT, align: :right, outline: TEXT)
   end
 
   def lab_hud(primitives)
@@ -339,10 +361,10 @@ class Game
   # --- Rendering -------------------------------------------------------------------------------------------------
 
   def render(args)
-    batches = if @state == :face
-                @ending.face_batches
-              else
-                @terrace.render(args)
+    batches = case @state
+              when :face then @ending.face_batches
+              when :render_lab then @render_lab.render(args)
+              else @terrace.render(args)
               end
     batches += @ending.hand_batches if @state == :art
     render_afterimage(args) if @state == :white
@@ -374,6 +396,7 @@ class Game
     post.veil = veil
     post.veil_softness = 0.35
     @ending.grade(post, @state, @state_time) if %i[art face].include?(@state)
+    @render_lab.grade(post) if @state == :render_lab
   end
 
   def veil
@@ -396,6 +419,7 @@ class Game
     title_hud(primitives) if %i[title launch white].include?(@state)
     hint_hud(primitives) if @state == :play
     lab_hud(primitives) if @state == :lab
+    render_lab_hud(primitives) if @state == :render_lab
     afterimage(primitives) if @state == :white
     primitives
   end
