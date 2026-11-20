@@ -5,15 +5,18 @@
 # as parcels that keep some of the pitcher's motion and fall under gravity, which bends the stream when the
 # pitcher moves; each parcel lands on whatever is below it (see Game#land).
 class Pitcher
-  BOTTOM = [2.95, -6.3, 0.0].freeze
-  SPOUT_BASE = [1.75, -0.8, 0.0].freeze
-  SPOUT_TIP = [0.1, 0.0, 0.0].freeze
-  HEIGHT = 6.0
-  BOTTOM_RADIUS = 2.5
-  TOP_RADIUS = 2.15
-  MILK_Y = 4.3
-  # The spout points left and a little towards the eye, so that its body stays right of the art and behind it
-  YAW = 0.55
+  BOTTOM = [3.4, -6.3, 0.0].freeze
+  SPOUT_BASE = [2.1, -1.0, 0.0].freeze
+  SPOUT_TIP = [0.3, 0.0, 0.0].freeze
+  # Half the wall's thickness, the height of the rolled rim above the bottom and the radius it runs at (the middle
+  # of the wall there)
+  WALL = 0.25
+  RIM = 5.85
+  RIM_RADIUS = 1.99
+  MILK_Y = 4.6
+  # The spout points left and a little towards the eye, so that its body stays right of the art and behind it,
+  # and its beak shows in profile
+  YAW = 0.35
   # Where its bottom stands on the table while nobody holds it
   REST = [10.8, 0.0, 2.2].freeze
   # Height of the spout above the coffee
@@ -30,28 +33,32 @@ class Pitcher
 
   attr_reader :x, :y, :z, :tilt, :flow, :parcels, :mode, :height
 
+  # The can's wall, cut open at the rim
   def self.wall(x, y, z)
-    cy = y - BOTTOM[1] - (HEIGHT * 0.5)
-    shell = Sdf.capped_cone(x - BOTTOM[0], cy, z, HEIGHT * 0.5, BOTTOM_RADIUS, TOP_RADIUS).abs - 0.12
-    cut = cy - (HEIGHT * 0.5)
+    shell = can(x, y, z).abs - WALL
+    cut = y - BOTTOM[1] - RIM
     # rubocop:disable-next Style/MinMaxComparison
     shell > cut ? shell : cut
   end
 
-  # A beak that opens into a channel towards the tip at the origin
+  # The middle of the can's wall: a frustum rounded off by 0.6, from WALL above the bottom to above the rim, so
+  # that the cut opens it. Outside, its radius is 2.6 at the bottom and 2.24 at the rim.
+  def self.can(x, y, z)
+    Sdf.capped_cone(x - BOTTOM[0], y - BOTTOM[1] - 3.6, z, 2.75, 1.75, 1.35) - 0.6
+  end
+
+  # A beak that sticks out well beyond the rim and rises above it, open along the top into a channel towards the
+  # tip at the origin
   def self.spout(x, y, z)
-    beak = Sdf.cone_between(x, y, z, SPOUT_BASE, SPOUT_TIP, 0.95, 0.16).abs - 0.1
-    open_top = ((x - 1.75) * 0.43) + ((y + 0.8) * 0.9) - 0.05
+    beak = Sdf.cone_between(x, y, z, SPOUT_BASE, SPOUT_TIP, 1.0, 0.3).abs - 0.2
+    open_top = ((x - SPOUT_BASE[0]) * 0.486) + ((y - SPOUT_BASE[1]) * 0.874) - 0.05
     # rubocop:disable-next Style/MinMaxComparison
     beak > open_top ? beak : open_top
   end
 
   # The inside below the milk never shows
   def self.visible_surface?(x, y, z)
-    bx, by, = BOTTOM
-    cy = y - by - (HEIGHT * 0.5)
-    inside = Sdf.capped_cone(x - bx, cy, z, HEIGHT * 0.5, BOTTOM_RADIUS, TOP_RADIUS).negative?
-    !inside || y - by > MILK_Y + 0.1
+    can(x, y, z).positive? || y - BOTTOM[1] > MILK_Y + 0.1
   end
 
   def initialize

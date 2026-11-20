@@ -10,10 +10,10 @@ module Models
 
   # How each model is baked: the method with its parts, its bounds, splat spacing, seed, and which splats it keeps
   BAKES = {
-    cup: [:cup_parts, [-7.6, -0.2, -5.6, 5.6, 6.4, 5.6], 0.3, 11, ->(x, y, z) { Cup.visible_surface?(x, y, z) }],
+    cup: [:cup_parts, [-8.0, -0.2, -5.8, 5.8, 6.5, 5.8], 0.3, 11, ->(x, y, z) { Cup.visible_surface?(x, y, z) }],
     saucer: [:saucer_parts, [-8.0, -0.2, -8.0, 8.0, 1.4, 8.0], 0.38, 12,
              ->(x, y, z) { y > 0.2 && (x * x) + (z * z) > 4.0 }],
-    pitcher: [:pitcher_parts, [-0.6, -6.6, -3.0, 8.4, 0.6, 3.0], 0.28, 13,
+    pitcher: [:pitcher_parts, [-1.0, -6.6, -3.1, 9.0, 0.8, 3.1], 0.28, 13,
               ->(x, y, z) { Pitcher.visible_surface?(x, y, z) }],
     moka_pot: [:moka_pot_parts, [-4.4, -0.2, -3.2, 5.4, 9.8, 3.2], 0.3, 14, nil]
   }.freeze
@@ -40,30 +40,30 @@ module Models
     SdfBaker.bake(send(parts), bounds: bounds, spacing: spacing, size: spacing * 3.0, seed: seed, keep: keep)
   end
 
-  # A footed latte bowl with its handle on the left, glazed outside and white inside. Its foot stands on y = 0.
+  # The models are simple blobs: round chunky forms with thick walls, every part one plain color without the
+  # baker's random shading (shade) or gloss, which would make them grainy.
+
+  # A deep round latte bowl with a rolled rim on a short foot, and a fat ring for a handle on the left; glazed
+  # outside, white inside and on top of the rim. Its foot stands on y = 0.
   def cup_parts
     [
-      { sdf: ->(x, y, z) { Sdf.cylinder(x, y - 0.75, z, 2.35, 0.75, 0.25) }, color: GLAZE, gloss: 0.12, shade: 0.04 },
-      { sdf: ->(x, y, z) { Cup.wall(x, y, z) }, color: GLAZE, gloss: 0.12, shade: 0.04, blend: 0.6 },
-      { sdf: ->(x, y, z) { Sdf.torus(x, y - Cup::RIM_Y, z, Cup::RADIUS, Cup::WALL) }, color: PORCELAIN, blend: 0.1 },
-      { sdf: ->(x, y, z) { [Sdf.torus_xy(x + 5.55, y - 3.7, z, 1.3, 0.36), x + 4.5].max }, color: GLAZE,
-        gloss: 0.25, blend: 0.35 },
-      { sdf: ->(x, y, z) { Cup.middle(x, y, z) }, color: PORCELAIN, gloss: 0.1, shade: 0.04, paint: true },
-      { sdf: ->(x, y, z) { Sdf.torus(x, y - Cup::RIM_Y, z, Cup::RADIUS, Cup::WALL + 0.12) }, color: PORCELAIN,
-        gloss: 0.2, paint: true }
+      { sdf: ->(x, y, z) { Cup.wall(x, y, z) }, color: GLAZE, shade: 0.0 },
+      { sdf: ->(x, y, z) { Sdf.torus(x, y - Cup::RIM_Y, z, Cup::RADIUS, Cup::WALL) }, color: GLAZE, shade: 0.0,
+        blend: 0.2 },
+      { sdf: ->(x, y, z) { Sdf.cylinder(x, y - 0.6, z, 2.4, 0.6, 0.45) }, color: GLAZE, shade: 0.0, blend: 1.0 },
+      { sdf: ->(x, y, z) { [Sdf.torus_xy(x + 5.7, y - 3.6, z, 1.35, 0.6), x + 4.6].max }, color: GLAZE, shade: 0.0,
+        blend: 0.7 },
+      { sdf: ->(x, y, z) { Cup.middle(x, y, z) }, color: PORCELAIN, shade: 0.0, paint: true },
+      { sdf: ->(x, y, z) { Cup.rim_top(x, y, z) }, color: PORCELAIN, shade: 0.0, paint: true }
     ]
   end
 
-  # A wide plate with a shallow well for the cup and a raised lip, white on top and glazed around its edge
+  # A thick rounded plate with a shallow well for the cup, white on top and glazed around its edge
   def saucer_parts
     [
-      { sdf: ->(x, y, z) { Sdf.cylinder(x, y - 0.32, z, 7.4, 0.32, 0.28) }, color: GLAZE, gloss: 0.12, shade: 0.04 },
-      { sdf: lambda { |x, y, z|
-        Sdf.torus(x, y - 0.62, z, 6.95, 0.26)
-      }, color: GLAZE, gloss: 0.12, shade: 0.04, blend: 0.5 },
-      { sdf: ->(x, y, z) { Sdf.ellipsoid(x, y - 1.15, z, 5.6, 0.62, 5.6) }, subtract: true, blend: 0.8 },
-      { sdf: ->(x, y, z) { Sdf.cylinder(x, y - 0.9, z, 6.6, 0.7) }, color: PORCELAIN, gloss: 0.1, shade: 0.04,
-        paint: true }
+      { sdf: ->(x, y, z) { Sdf.cylinder(x, y - 0.45, z, 7.4, 0.45, 0.45) }, color: GLAZE, shade: 0.0 },
+      { sdf: ->(x, y, z) { Sdf.ellipsoid(x, y - 1.6, z, 5.2, 0.9, 5.2) }, subtract: true, blend: 1.2 },
+      { sdf: ->(x, y, z) { Sdf.cylinder(x, y - 1.0, z, 6.6, 0.42) }, color: PORCELAIN, shade: 0.0, paint: true }
     ]
   end
 
@@ -72,40 +72,33 @@ module Models
   def pitcher_parts
     bx, by, = Pitcher::BOTTOM
     [
-      { sdf: ->(x, y, z) { Pitcher.wall(x, y, z) }, color: STEEL, gloss: 0.8, shade: 0.03 },
-      { sdf: ->(x, y, z) { Pitcher.spout(x, y, z) }, color: STEEL, gloss: 0.8, shade: 0.03, blend: 0.35 },
-      { sdf: ->(x, y, z) { [Sdf.torus_xy(x - bx - 3.3, y - by - 3.4, z, 1.45, 0.3), bx + 2.3 - x].max },
-        color: STEEL, gloss: 0.8, shade: 0.03, blend: 0.3 },
-      { sdf: ->(x, y, z) { Sdf.cylinder(x - bx, y - by - Pitcher::MILK_Y, z, 2.2, 0.08) }, color: MILK },
-      { sdf: ->(x, y, z) { Sdf.cylinder(x - bx, y - by - Pitcher::MILK_Y - 0.1, z, 2.25, 0.12) }, color: MILK,
-        paint: true }
+      { sdf: ->(x, y, z) { Pitcher.wall(x, y, z) }, color: STEEL, shade: 0.0 },
+      { sdf: ->(x, y, z) { Sdf.torus(x - bx, y - by - Pitcher::RIM, z, Pitcher::RIM_RADIUS, Pitcher::WALL) },
+        color: STEEL, shade: 0.0, blend: 0.15 },
+      { sdf: ->(x, y, z) { Pitcher.spout(x, y, z) }, color: STEEL, shade: 0.0, blend: 0.6 },
+      { sdf: ->(x, y, z) { [Sdf.torus_xy(x - bx - 3.2, y - by - 3.4, z, 1.5, 0.5), bx + 2.2 - x].max },
+        color: STEEL, shade: 0.0, blend: 0.6 },
+      { sdf: ->(x, y, z) { Sdf.cylinder(x - bx, y - by - Pitcher::MILK_Y, z, 2.1, 0.08) }, color: MILK, shade: 0.0 }
     ]
   end
 
-  # An octagonal stovetop pot: a boiler that narrows to the waist, a collector that widens to the lid, a black
-  # knob and handle on the right (towards the cup) and its spout on the left
+  # A stovetop pot: two round frustums, rounded off and pinched at the waist, a domed lid, a stubby spout on the
+  # left, and a black knob and chunky handle on the right (towards the cup)
   def moka_pot_parts
+    round = 0.45
     [
-      { sdf: lambda { |x, y, z|
-        Sdf.ngon_frustum(x, y - 2.1, z, 8, 2.1, 2.55, 2.0)
-      }, color: ALUMINIUM, gloss: 0.72, shade: 0.05 },
-      { sdf: ->(x, y, z) { Sdf.cylinder(x, y - 4.3, z, 1.95, 0.25, 0.1) }, color: ALUMINIUM, gloss: 0.72, shade: 0.05,
-        blend: 0.15 },
-      { sdf: lambda { |x, y, z|
-        Sdf.ngon_frustum(x, y - 6.45, z, 8, 2.0, 2.0, 2.45)
-      }, color: ALUMINIUM, gloss: 0.72, shade: 0.05,
-        blend: 0.15 },
-      { sdf: lambda { |x, y, z|
-        Sdf.ngon_frustum(x, y - 8.6, z, 8, 0.18, 2.5, 2.2)
-      }, color: ALUMINIUM, gloss: 0.72, shade: 0.05,
-        blend: 0.1 },
-      { sdf: ->(x, y, z) { Sdf.cone_between(x, y, z, [-1.6, 7.6, 0.0], [-3.4, 8.7, 0.0], 0.75, 0.3) },
-        color: ALUMINIUM, gloss: 0.72, shade: 0.05, blend: 0.3 },
-      { sdf: ->(x, y, z) { Sdf.cylinder(x, y - 9.05, z, 0.45, 0.3, 0.15) }, color: BAKELITE, gloss: 0.3 },
-      { sdf: ->(x, y, z) { Sdf.capsule(x, y, z, [2.3, 8.0, 0.0], [4.3, 7.5, 0.0], 0.4) }, color: BAKELITE,
-        gloss: 0.3, blend: 0.2 },
-      { sdf: ->(x, y, z) { Sdf.capsule(x, y, z, [4.3, 7.5, 0.0], [3.8, 5.0, 0.0], 0.45) }, color: BAKELITE,
-        gloss: 0.3, blend: 0.3 }
+      { sdf: ->(x, y, z) { Sdf.capped_cone(x, y - 2.1, z, 2.1 - round, 2.55 - round, 2.0 - round) - round },
+        color: ALUMINIUM, shade: 0.0 },
+      { sdf: ->(x, y, z) { Sdf.capped_cone(x, y - 6.4, z, 2.0 - round, 2.0 - round, 2.45 - round) - round },
+        color: ALUMINIUM, shade: 0.0, blend: 0.5 },
+      { sdf: ->(x, y, z) { Sdf.ellipsoid(x, y - 8.4, z, 2.3, 0.6, 2.3) }, color: ALUMINIUM, shade: 0.0, blend: 0.4 },
+      { sdf: ->(x, y, z) { Sdf.cone_between(x, y, z, [-1.6, 7.4, 0.0], [-3.3, 8.5, 0.0], 0.8, 0.35) },
+        color: ALUMINIUM, shade: 0.0, blend: 0.5 },
+      { sdf: ->(x, y, z) { Sdf.ellipsoid(x, y - 9.1, z, 0.6, 0.45, 0.6) }, color: BAKELITE, shade: 0.0 },
+      { sdf: ->(x, y, z) { Sdf.capsule(x, y, z, [2.4, 7.9, 0.0], [4.3, 7.5, 0.0], 0.5) }, color: BAKELITE,
+        shade: 0.0 },
+      { sdf: ->(x, y, z) { Sdf.capsule(x, y, z, [4.3, 7.5, 0.0], [3.9, 5.0, 0.0], 0.55) }, color: BAKELITE,
+        shade: 0.0, blend: 0.4 }
     ]
   end
 end

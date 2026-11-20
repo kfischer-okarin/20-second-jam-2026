@@ -1,18 +1,18 @@
 # The shape of the latte cup, shared by its model, the coffee in it and the milk spilled over it. The bowl is
-# the lower half of an ellipsoid shell cut at the rim; heights are from the bottom of its foot, which stands in
-# the saucer's well at BASE_Y.
+# the lower half of a thick ellipsoid shell cut at the rim, which a torus rolls round; heights are from the bottom
+# of its foot, which stands in the saucer's well at BASE_Y.
 module Cup
   RIM_Y = 5.8
   # Radius of the middle of the wall at the rim, and how far below the rim the ellipsoid reaches
   RADIUS = 5.0
-  DEPTH = 4.6
-  WALL = 0.22
-  BASE_Y = 0.56
+  DEPTH = 4.8
+  WALL = 0.38
+  BASE_Y = 0.72
   # The coffee before any milk, and the highest it can rise before it runs over
   START_LEVEL = 3.9
-  FULL_LEVEL = 5.55
+  FULL_LEVEL = 5.4
   SAUCER_RADIUS = 7.3
-  SAUCER_Y = 0.66
+  SAUCER_Y = 0.88
 
   extend self
 
@@ -28,6 +28,14 @@ module Cup
   # Negative inside the middle of the wall
   def middle(x, y, z)
     Sdf.ellipsoid(x, y - RIM_Y, z, RADIUS, DEPTH, RADIUS)
+  end
+
+  # Negative on the top of the rim, which is white like the inside
+  def rim_top(x, y, z)
+    ring = Sdf.torus(x, y - RIM_Y, z, RADIUS, WALL + 0.1)
+    below = RIM_Y - 0.05 - y
+    # rubocop:disable-next Style/MinMaxComparison
+    ring > below ? ring : below
   end
 
   def inner_radius(y)
