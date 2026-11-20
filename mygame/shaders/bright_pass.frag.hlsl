@@ -9,6 +9,7 @@ SamplerState glow_sampler : register(s1, space2);
 cbuffer Uniforms : register(b0, space3) {
   float threshold;
   float gain;
+  float solid; // 1 lets the solid layer bloom too, 0 only the glow layer
 };
 
 struct Input {
@@ -33,7 +34,7 @@ float3 glow_average(float2 uv) {
 
 Output main(Input input) {
   Output output;
-  float3 color = scene.SampleLevel(scene_sampler, input.tex_coord, 0).rgb + glow_average(input.tex_coord);
+  float3 color = scene.SampleLevel(scene_sampler, input.tex_coord, 0).rgb * solid + glow_average(input.tex_coord);
   float brightest = max(color.r, max(color.g, color.b));
   float amount = saturate((brightest - threshold) / max(1.0 - threshold, 0.001));
   output.frag_color = float4(color * amount * amount * gain, 1.0);

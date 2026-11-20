@@ -23,13 +23,14 @@ class PostProcess
   ].freeze
 
   # background_color shows wherever nothing is drawn; shadow_tint (0..1) adds shadow_tint_color to dark tones.
+  # Light brighter than bright_threshold blooms: in the glow layer, and in the solid layer too with bloom_solid.
   # exposure multiplies the scene before flash and grading. veil (0..1) closes veil_color in from the edges of
   # the screen, with a soft edge veil_softness wide. palette is the colors every pixel ends up as (all colors
   # stay when it is empty).
   # smooth (pixels, 0 for none) evens out the solid layer before that: each pixel averages its neighbors within
   # smooth that are close to its own color, closer the higher smooth_sharpness.
   attr_accessor :background_color, :bloom, :aberration, :dither, :flash, :flash_color, :shadow_tint,
-                :shadow_tint_color, :vignette, :saturation, :outline, :bright_threshold, :exposure, :veil,
+                :shadow_tint_color, :vignette, :saturation, :outline, :bright_threshold, :bloom_solid, :exposure, :veil,
                 :veil_softness, :veil_color, :palette, :smooth, :smooth_sharpness
 
   # The render target shown on screen. It belongs to the class so that a chosen view survives restarts of the
@@ -52,6 +53,7 @@ class PostProcess
     @saturation = 1.1
     @outline = 1.0
     @bright_threshold = 0.76
+    @bloom_solid = true
     @exposure = 1.0
     @veil = 0.0
     @veil_softness = 0.3
@@ -109,7 +111,8 @@ class PostProcess
     target.shader = {
       path: 'shaders/bright_pass.frag.hlsl',
       textures: [:rt_glow],
-      uniforms: [{ type: :float, value: @bright_threshold }, { type: :float, value: 1.4 }]
+      uniforms: [{ type: :float, value: @bright_threshold }, { type: :float, value: 1.4 },
+                 { type: :float, value: @bloom_solid ? 1.0 : 0.0 }]
     }
     target.primitives << { x: 0, y: 0, w: w, h: h, path: :rt_solid, blendmode_enum: 0, scale_quality_enum: 1 }
   end
