@@ -11,7 +11,7 @@
 #   :face    his face, content, as white closes in from the edges
 #   :white   only white and an afterimage of the art, as the title fades back in
 class Game
-  PLAY_SECONDS = 75.0
+  PLAY_SECONDS = 20.0
   # How much of the time the wave takes to cross the meadow before it reaches the table
   MEADOW_SHARE = 0.82
   TITLE_TILT = -74.0
@@ -458,7 +458,7 @@ class Game
   end
 
   def hint_hud(primitives)
-    alpha = (1.0 - ((@state_time - 7.0) / 2.0)).clamp(0.0, 1.0) * (@state_time / 0.8).clamp(0.0, 1.0)
+    alpha = (1.0 - ((@state_time - 4.5) / 1.5)).clamp(0.0, 1.0) * (@state_time / 0.8).clamp(0.0, 1.0)
     return if alpha <= 0.0 || @autopilot
 
     text = 'MOUSE AIM  HOLD CLICK POUR  W/S HEIGHT  A/D TILT'
