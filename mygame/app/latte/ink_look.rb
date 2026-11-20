@@ -35,14 +35,25 @@ module InkLook
     milk: { ramp: [28, 29, 29] }
   }.freeze
 
+  # The game's ink look (see InkPieces) has only two tones of each, for shadow and light
+  TWO_TONES = {
+    glaze: { ramp: [7, 8] }, porcelain: { ramp: [11, 12] }, steel: { ramp: [15, 16] },
+    aluminium: { ramp: [19, 20] }, bakelite: { ramp: [22, 23] }, milk: { ramp: [28, 29] }
+  }.freeze
+  # The table's two tones
+  TABLE = 4
+  TABLE_SHADOW = 3
+
   # The material a baked splat belongs to, from the albedo the baker gave it
   BY_ALBEDO = {
     glaze: Models::GLAZE, porcelain: Models::PORCELAIN, steel: Models::STEEL, aluminium: Models::ALUMINIUM,
     bakelite: Models::BAKELITE, milk: Models::MILK
   }.freeze
 
-  def self.material_of(r, g, b)
-    name = BY_ALBEDO.min_by { |_name, (ar, ag, ab)| ((ar - r)**2) + ((ag - g)**2) + ((ab - b)**2) }.first
-    MATERIALS.fetch(name)
+  def self.material_of(r, g, b) = MATERIALS.fetch(name_of(r, g, b))
+  def self.two_tone_of(r, g, b) = TWO_TONES.fetch(name_of(r, g, b))
+
+  def self.name_of(r, g, b)
+    BY_ALBEDO.min_by { |_name, (ar, ag, ab)| ((ar - r)**2) + ((ag - g)**2) + ((ab - b)**2) }.first
   end
 end

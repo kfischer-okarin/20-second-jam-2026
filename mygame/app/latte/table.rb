@@ -5,6 +5,8 @@
 # of light bleaches the table from its far edge (see #render).
 #
 # The wood keeps close to the palette's browns: a brown between two of them would dither into unrelated colors.
+#
+# A plain table (for the ink look) is one flat color, [r, g, b], without boards, grain, seams or glare.
 class Table
   BOARD_WIDTH = 4.4
   BOARDS = 15
@@ -14,6 +16,8 @@ class Table
   DARK_GRAIN = [128, 76, 62].freeze
   LIGHT_GRAIN = [232, 172, 124].freeze
   SEAM = [62, 39, 49].freeze
+
+  attr_accessor :plain
 
   def initialize
     @boards = TriangleBatch.new(:background)
@@ -34,7 +38,7 @@ class Table
   # how much the far boards reflect the sun, bleach_z the depth up to which the wave of light has bleached it
   def render(view, light, glare, bleach_z)
     key = [view.pitch.round(4), view.height.round(3), light.map { |c| (c * 30).round }, (glare * 30).round,
-           bleach_z.round]
+           bleach_z.round, @plain]
     return if key == @key
 
     @key = key
@@ -43,8 +47,10 @@ class Table
     @edge.clear
     camera = [view.height, view.distance, Math.cos(view.pitch), Math.sin(view.pitch), view.focal]
     draw_boards(camera, light, glare, bleach_z)
-    draw_strips(@grain, @grain_strips, camera, light, glare, bleach_z)
-    draw_strips(@grain, @seam_strips, camera, light, glare * 0.2, bleach_z)
+    unless @plain
+      draw_strips(@grain, @grain_strips, camera, light, glare, bleach_z)
+      draw_strips(@grain, @seam_strips, camera, light, glare * 0.2, bleach_z)
+    end
     draw_far_edge(view, light)
   end
 
@@ -88,7 +94,7 @@ class Table
     shine = glare * (1.0 - depth) * (1.0 - depth)
     wash = z < bleach_z ? ((bleach_z - z) / 6.0).clamp(0.0, 1.0) : 0.0
     Array.new(3) do |c|
-      lit = (tone[c] * weather * light[c]) + (shine * [255.0, 225.0, 170.0][c])
+      lit = @plain ? @plain[c].to_f : (tone[c] * weather * light[c]) + (shine * [255.0, 225.0, 170.0][c])
       (lit + (([255.0, 255.0, 250.0][c] - lit) * wash)).clamp(0, 255)
     end
   end

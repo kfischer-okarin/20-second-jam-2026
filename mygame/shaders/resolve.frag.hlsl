@@ -11,7 +11,8 @@ SamplerState depth_sampler : register(s1, space2);
 SamplerState palette_sampler : register(s2, space2);
 
 cbuffer Uniforms : register(b0, space3) {
-  float4 params; // x: palette colors, y: depth step that makes a contour, z: contour 0 none, 1 ink, 2 shade
+  float4 params; // x: palette colors, y: depth step that makes a contour, z: contour 0 none, 1 ink, 2 shade,
+                 // w: 1 outlines the shapes in ink also where nothing lies behind them
   float4 ink;    // rgb: the ink's color
 };
 
@@ -64,6 +65,12 @@ float block_depth(int2 p, int2 size) {
              min(sample_depth(q + int2(0, 1), size), sample_depth(q + int2(1, 1), size)));
 }
 
+bool block_covered(int2 p, int2 size) {
+  int2 q = p * 2;
+  return sample_color(q, size).a > 0.5 || sample_color(q + int2(1, 0), size).a > 0.5 ||
+         sample_color(q + int2(0, 1), size).a > 0.5 || sample_color(q + int2(1, 1), size).a > 0.5;
+}
+
 // The palette color most of a pixel's covered samples are nearest to (-1 when none is covered)
 int block_label(int2 p, int2 size) {
   int labels[4];
@@ -103,12 +110,32 @@ Output main(Input input) {
   int2 size = int2(full);
   int2 p = int2(floor(input.tex_coord * full * 0.5));
   int label = block_label(p, size);
+  bool hole = false;
   if (label < 0) {
-    output.frag_color = float4(0.0, 0.0, 0.0, 0.0);
-    return output;
+    // An empty pixel beside a covered one is the outline of the shape, unless it is covered on three or four
+    // sides: then it is a gap between splats, which takes the color of a neighbor
+    int2 sides[4] = { int2(1, 0), int2(-1, 0), int2(0, 1), int2(0, -1) };
+    int covered = 0;
+    int2 filler = int2(0, 0);
+    for (int i = 0; i < 4; i++) {
+      if (block_covered(p + sides[i], size)) {
+        covered++;
+        filler = sides[i];
+      }
+    }
+    if (params.w < 0.5 || covered == 0) {
+      output.frag_color = float4(0.0, 0.0, 0.0, 0.0);
+      return output;
+    }
+    if (covered < 3) {
+      output.frag_color = float4(ink.rgb, 1.0);
+      return output;
+    }
+    label = block_label(p + filler, size);
+    hole = true;
   }
   float3 color = palette_color(label);
-  if (params.z > 0.5) {
+  if (params.z > 0.5 && !hole) {
     // A contour where the pixel lies clearly behind the average of its neighbors along a row or a column (the
     // depth's second derivative, which a slanted surface leaves at 0), in the color of the nearer neighbor
     float here = block_depth(p, size);

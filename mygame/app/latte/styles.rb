@@ -7,6 +7,9 @@
 #   smooth   evens out the mottle of neighboring splats over this many pixels before the palette (see PostProcess)
 #   gloss    how much metal and glaze reflect (1: fully)
 #   bloom    how much bright light blooms
+#   ink_look draws the set pieces in two flat tones with ink lines, lit once by a sun from the left (see InkPieces)
+#   bloom_solid lets the bright solid things bloom too, not only the glow layer
+#   bright_threshold, vignette, saturation and shadow_tint grade the picture (see Game#grade)
 module Styles
   # Ramps of seven or so steps for each of the terrace's materials
   RAMPS = [
@@ -57,6 +60,8 @@ module Styles
   SEPIA_BLUE = (SEPIA + [[52, 70, 120], [108, 136, 190], [255, 255, 255]]).freeze
 
   ALL = [
+    { name: 'INK', ink_look: true, palette: [], dither: 0.0, smooth: 0, bloom: 0.3, bloom_solid: false,
+      vignette: 0.12, saturation: 1.0, shadow_tint: 0.0 },
     { name: 'RAMPS', palette: RAMPS, dither: 0.0, smooth: 0, gloss: 1.0, bloom: 0.75 },
     { name: 'RAMPS SMOOTH', palette: RAMPS, dither: 0.0, smooth: 2, gloss: 0.6, bloom: 0.6 },
     { name: 'CEL', palette: CEL, dither: 0.0, smooth: 2, gloss: 0.35, bloom: 0.45 },

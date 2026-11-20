@@ -5,11 +5,12 @@
 # A glossy material shows a hard glint, one palette color, where it mirrors the sun to the eye.
 #
 # field responds to distance(x, y, z) in world space; materials are { ramp: [palette indices], glint: index }.
+# occlusion 0 leaves the occlusion out, and hard_shadows gives shadows a hard edge instead of a soft one.
 class RampLighting
   attr_accessor :sun, :view
 
   def initialize(field, sun:, view:, ambient: 0.14, sky: 0.3, sun_strength: 0.72, occlusion: 1.5, jitter: 0.12,
-                 seed: 1)
+                 hard_shadows: false, seed: 1)
     @field = field
     @sun = normalize(*sun)
     @view = normalize(*view)
@@ -18,6 +19,7 @@ class RampLighting
     @sun_strength = sun_strength
     @occlusion = occlusion
     @jitter = jitter
+    @hard_shadows = hard_shadows
     @rng = Rng.new(seed)
   end
 
@@ -34,7 +36,8 @@ class RampLighting
     lx, ly, lz = @sun
     sun = (nx * lx) + (ny * ly) + (nz * lz)
     sun = sun.positive? ? sun * shadow(x + (nx * 0.05), y + (ny * 0.05), z + (nz * 0.05)) : 0.0
-    (occlusion(x, y, z, nx, ny, nz) * (@ambient + (@sky * (0.5 + (0.5 * ny))))) + (@sun_strength * sun)
+    open = @occlusion.zero? ? 1.0 : occlusion(x, y, z, nx, ny, nz)
+    (open * (@ambient + (@sky * (0.5 + (0.5 * ny))))) + (@sun_strength * sun)
   end
 
   private
@@ -46,7 +49,8 @@ class RampLighting
     ((nx * hx) + (ny * hy) + (nz * hz)) / Math.sqrt((hx * hx) + (hy * hy) + (hz * hz)) > threshold
   end
 
-  # Soft shadow: how close the ray towards the sun passes to something, relative to how far it went
+  # Soft shadow: how close the ray towards the sun passes to something, relative to how far it went. A hard one
+  # only tells whether it hits something.
   def shadow(x, y, z)
     lx, ly, lz = @sun
     t = 0.07
@@ -56,7 +60,7 @@ class RampLighting
       return 0.0 if d < 0.004
 
       ratio = 9.0 * d / t
-      lit = ratio if ratio < lit
+      lit = ratio if !@hard_shadows && ratio < lit
       t += d.clamp(0.05, 0.9)
       break if t > 30.0
     end

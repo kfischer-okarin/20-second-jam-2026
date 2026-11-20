@@ -26,6 +26,7 @@ require 'app/render/particles'
 require 'app/render/layer_sprite'
 require 'app/render/triangle_batch'
 require 'app/render/ramp_lighting'
+require 'app/render/bake_files'
 require 'app/sfx'
 require 'app/latte/styles'
 require 'app/latte/view'
@@ -45,6 +46,7 @@ require 'app/latte/autopilot'
 require 'app/latte/ink_look'
 require 'app/latte/set_piece_field'
 require 'app/latte/ink_splat_scene'
+require 'app/latte/ink_pieces'
 require 'app/latte/render_lab'
 require 'app/game'
 require 'app/game_cli'
@@ -52,7 +54,8 @@ require 'app/game_cli'
 module Main
   # Files whose changes can change how a baked model looks
   SHAPE_FILES = %w[render/sdf.rb render/sdf_baker.rb render/splat_model.rb render/noise3.rb render/rng.rb
-                   latte/models.rb latte/cup.rb latte/pitcher.rb latte/ending_models.rb].freeze
+                   render/ramp_lighting.rb latte/models.rb latte/cup.rb latte/pitcher.rb latte/ending_models.rb
+                   latte/ink_look.rb latte/ink_pieces.rb latte/set_piece_field.rb].freeze
 
   def start
     Game.current = Game.new(args)

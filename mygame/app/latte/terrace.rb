@@ -5,9 +5,13 @@
 #   solid       puddles on the table, saucer, puddles on it, its shadows, cup, drips, coffee, its shadows,
 #               moka pot, stream, pitcher, splashes
 #   glow        sun, wave, glints, steam
+# In the ink look (see InkPieces) the saucer, the cup and the moka pot are one sprite, so what lies on them comes
+# after all three, and the light is a sun from the left that stays put.
 class Terrace
   MOKA_POSITION = [-10.6, 0.0, 3.6].freeze
   MOKA_YAW = 0.5
+  # What a shadow on the table multiplies its color by in the ink look: from its light tone to its shadow tone
+  INK_SHADOW = [176.0 / 214, 128.0 / 168, 98.0 / 124].freeze
   # Elevation of the sun (radians) as the wave comes: shadows grow long
   SUN_HIGH = 0.68
   SUN_LOW = 0.13
@@ -27,7 +31,7 @@ class Terrace
     @shadows = Shadows.new
     @steam = Steam.new
     @models = { cup: Models.cup, saucer: Models.saucer, moka: Models.moka_pot, pitcher: Models.pitcher }
-    @casters = {
+    @splat_casters = {
       cup: Shadows.sample(@models[:cup], 0.3, coffee: false), saucer: Shadows.sample(@models[:saucer], 0.38),
       moka: Shadows.sample(@models[:moka], 0.3), pitcher: Shadows.sample(@models[:pitcher], 0.28)
     }
@@ -50,12 +54,31 @@ class Terrace
   # How loud the pour is (0..1), and whether milk just splashed somewhere it should not
   attr_reader :pour_gain, :splash_sound
 
-  # Ink lines around the objects and cel shading on them, see Styles
+  # Ink lines around the objects and cel shading on them, or the ink look, see Styles
   def style=(style)
     @style = style
     %i[saucer cup moka pitcher].each do |name|
       @batches[name].ink = style[:ink]
     end
+    @ink ||= InkPieces.new(ink_placement) if ink?
+    @table.plain = ink? ? InkLook::PALETTE[InkLook::TABLE] : nil
+    @shadows.hard = ink?
+    @shadows.tint = ink? ? INK_SHADOW : Shadows::TINT
+    @casters = ink? ? ink_casters : @splat_casters
+  end
+
+  # Hard shadows need smooth edges, so they are cast by every splat: the finer ones of the pieces that stand still
+  def ink_casters
+    @ink_casters ||= begin
+      static = @ink.casters
+      pitcher = @models[:pitcher]
+      { cup: static[:cup], saucer: static[:saucer], moka: static[:moka_pot],
+        pitcher: Shadows.sample(pitcher, 0.28, samples: pitcher.count) }
+    end
+  end
+
+  def ink?
+    @style[:ink_look]
   end
 
   def update(dt, controls)
@@ -94,7 +117,7 @@ class Terrace
   def render(args)
     @cup_anchor = @view.point(0.0, 0.0, 0.0)
     render_static
-    render_pitcher
+    ink? ? render_ink(args.outputs) : render_pitcher
     render_stream
     render_coffee(args)
     @shadows.clear_moving
@@ -153,16 +176,30 @@ class Terrace
 
   def batches
     list = [@world.sky, @world.back, @world.meadow, *@table.batches, @shadows.table_sprite, @spills.table_batch]
-    list << @batches[:saucer] << @spills.saucer_batch << @shadows.saucer_sprite unless @hidden[:saucer]
-    list << @batches[:cup] << @spills.drip_batch << @coffee_sprite << @shadows.coffee_sprite unless @hidden[:cup]
-    list << @batches[:moka] << @batches[:stream]
-    list << @batches[:pitcher] unless @hidden[:pitcher]
+    ink? ? add_ink_batches(list) : add_splat_batches(list)
     list << @spills.splashes.render << @world.glow << @steam.render
     tilt = @view.tilt
     list.each do |batch|
       batch.shift_y = tilt
     end
     list
+  end
+
+  def add_splat_batches(list)
+    list << @batches[:saucer] << @spills.saucer_batch << @shadows.saucer_sprite unless @hidden[:saucer]
+    list << @batches[:cup] << @spills.drip_batch << @coffee_sprite << @shadows.coffee_sprite unless @hidden[:cup]
+    list << @batches[:moka] << @batches[:stream]
+    list << @batches[:pitcher] unless @hidden[:pitcher]
+  end
+
+  # The shadows on the saucer would darken the cup and the table's shadows behind it too, now that the saucer and
+  # the cup are one sprite, so the pitcher shadows only the table and the coffee
+  def add_ink_batches(list)
+    list << @ink.static_sprite
+    list << @spills.saucer_batch unless @hidden[:saucer]
+    list << @spills.drip_batch << @coffee_sprite << @shadows.coffee_sprite unless @hidden[:cup]
+    list << @batches[:stream]
+    list << @ink.pitcher_sprite unless @hidden[:pitcher]
   end
 
   # The light of the afternoon, then of the wave: the sun sinks towards the horizon, so shadows grow, and its
@@ -179,7 +216,7 @@ class Terrace
     sine = Math.sin(@sun_elevation)
     @table_light = Array.new(3) { |c| (@ambient[c] * 0.75) + (@sun_color[c] * sine * 0.75) }
     @glare = 0.08 + (p * 0.25)
-    @shadows.strength = (0.5 + (p * 0.18)).clamp(0.0, 0.85)
+    @shadows.strength = ink? ? 1.0 : (0.5 + (p * 0.18)).clamp(0.0, 0.85)
     @world.supernova = p.positive? ? [p * 4.0, 1.0].min : 0.0
     @world.wave = p
   end
@@ -214,17 +251,34 @@ class Terrace
   end
 
   # The saucer, the cup and the moka pot stand still, so they are drawn again (and cast their shadows again)
-  # only when the view or the light changed noticeably
+  # only when the view or the light changed noticeably. InkPieces draws them in the ink look.
   def render_static
     key = [@view.pitch.round(3), @view.height.round(2), (@light_progress * 30).round, @cup_glow.round(2), @cup_lift,
            @flash.round(2), @style[:name]]
     return if key == @static_key
 
     @static_key = key
-    render_model(:saucer, Rot3::IDENTITY, [0.0, 0.0, 0.0])
-    render_model(:cup, Rot3::IDENTITY, cup_position)
-    render_model(:moka, Rot3.rot_y(MOKA_YAW), MOKA_POSITION)
+    unless ink?
+      render_model(:saucer, Rot3::IDENTITY, [0.0, 0.0, 0.0])
+      render_model(:cup, Rot3::IDENTITY, cup_position)
+      render_model(:moka, Rot3.rot_y(MOKA_YAW), MOKA_POSITION)
+    end
     cast_static_shadows
+  end
+
+  # Where InkPieces lights the pieces that stand still
+  def ink_placement
+    { saucer: [Rot3::IDENTITY, [0.0, 0.0, 0.0]], cup: [Rot3::IDENTITY, [0.0, Cup::BASE_Y, 0.0]],
+      moka_pot: [Rot3.rot_y(MOKA_YAW), MOKA_POSITION] }
+  end
+
+  def render_ink(outputs)
+    frames = {}
+    frames[:saucer] = @view.point(0.0, 0.0, 0.0) unless @hidden[:saucer]
+    frames[:cup] = cup_frame unless @hidden[:cup]
+    frames[:moka_pot] = @view.point(*MOKA_POSITION)
+    pitcher = [@view.point(@pitcher.x, @pitcher.y, @pitcher.z), @pitcher.rotation] unless @hidden[:pitcher]
+    @ink.render(outputs, @view.focal, frames, pitcher)
   end
 
   def cup_position
@@ -263,15 +317,20 @@ class Terrace
     parcels = @pitcher.parcels
     return if parcels.empty?
 
-    light = light_for(@cup_anchor[3])
-    r = (Models::MILK[0] * (light.ambient[0] + (light.rim[0] * 0.5))).clamp(0, 255)
-    g = (Models::MILK[1] * (light.ambient[1] + (light.rim[1] * 0.5))).clamp(0, 255)
-    b = (Models::MILK[2] * (light.ambient[2] + (light.rim[2] * 0.5))).clamp(0, 255)
+    r, g, b = stream_color
     points = parcels.reverse.map { |parcel| [parcel[0], parcel[1], parcel[2], parcel[6]] }
     points.unshift([@pitcher.x, @pitcher.y, @pitcher.z, @pitcher.flow]) if @pitcher.flow.positive?
     points.each_cons(2) do |(x1, y1, z1, f1), (x2, y2, z2, f2)|
       stream_segment(batch, [x1, y1, z1, f1], [x2, y2, z2, f2], r, g, b)
     end
+  end
+
+  # Milk in the light, or the milk's light tone in the ink look
+  def stream_color
+    return InkLook::PALETTE[InkLook::TWO_TONES[:milk][:ramp].last] if ink?
+
+    light = light_for(@cup_anchor[3])
+    Array.new(3) { |c| (Models::MILK[c] * (light.ambient[c] + (light.rim[c] * 0.5))).clamp(0, 255) }
   end
 
   def stream_segment(batch, start, finish, r, g, b)
@@ -340,27 +399,40 @@ class Terrace
     values = [@time, @coffee.mix.clamp(0.0, 0.6), CoffeeSurface::RADIUS_CELLS / CoffeeSurface::N, @cup_glow,
               center_x, center_y, radius, radius,
               *@sun_color, @sun_elevation,
-              *@ambient, @coffee_elevation]
+              *@ambient, @coffee_elevation,
+              ink? ? 1.0 : 0.0, 0.0, 0.0, 0.0]
     values.map { |value| { type: :float, value: value.to_f } }
+  end
+
+  # Towards the sun: ahead of the eye, or from the left in the ink look
+  def sun_direction
+    return InkPieces::SUN if ink?
+
+    [0.0, Math.sin(@sun_elevation), -Math.cos(@sun_elevation)]
   end
 
   def shadow_scene
     ax, ay, scale, elevation = @cup_anchor
-    sine = Math.sin(@sun_elevation)
+    lx, ly, lz = sun_direction
     {
-      run: Math.cos(@sun_elevation) / sine, stretch: (1.0 / sine).clamp(1.0, 3.0), level: surface_y,
+      run_x: -lx / ly, run_z: -lz / ly, stretch: ink? ? 1.0 : (1.0 / ly).clamp(1.0, 3.0), level: surface_y,
       coffee_radius: @coffee.radius, saucer_y: Cup::SAUCER_Y, saucer_radius: Cup::SAUCER_RADIUS - 0.4,
       cup: [ax, ay, scale, Math.cos(elevation), Math.sin(elevation)],
       camera: [@view.height, @view.distance, Math.cos(@view.pitch), Math.sin(@view.pitch), @view.focal]
     }
   end
 
+  # In the ink look the pieces' shadows on each other are part of how InkPieces lit them
   def cast_static_shadows
     @shadows.clear_static
     scene = shadow_scene
-    @shadows.cast_static(@casters[:saucer], Rot3::IDENTITY, [0.0, 0.0, 0.0], scene) unless @hidden[:saucer]
-    @shadows.cast_static(@casters[:cup], Rot3::IDENTITY, cup_position, scene) unless @hidden[:cup]
-    @shadows.cast_static(@casters[:moka], Rot3.rot_y(MOKA_YAW), MOKA_POSITION, scene)
+    table_only = ink?
+    [[:saucer, Rot3::IDENTITY, [0.0, 0.0, 0.0]], [:cup, Rot3::IDENTITY, cup_position],
+     [:moka, Rot3.rot_y(MOKA_YAW), MOKA_POSITION]].each do |name, rotation, position|
+      next if @hidden[name]
+
+      @shadows.cast_static(@casters[name], rotation, position, scene, table_only: table_only)
+    end
   end
 
   def cast_pitcher_shadow

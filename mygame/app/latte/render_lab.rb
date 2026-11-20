@@ -198,7 +198,7 @@ class RenderLab
     target.primitives << { x: 0, y: 0, w: CoffeeSurface::N, h: CoffeeSurface::N, path: :coffee_field,
                            blendmode_enum: 0 }
     values = [@time, 0.15, CoffeeSurface::RADIUS_CELLS / CoffeeSurface::N, 0.0, clip[0], clip[1], clip[2], clip[2],
-              1.0, 0.94, 0.84, 0.7, 0.5, 0.54, 0.64, ELEVATION]
+              1.0, 0.94, 0.84, 0.7, 0.5, 0.54, 0.64, ELEVATION, 0.0, 0.0, 0.0, 0.0]
     target.shader = { path: 'shaders/coffee.frag.hlsl', uniforms: floats(values) }
   end
 

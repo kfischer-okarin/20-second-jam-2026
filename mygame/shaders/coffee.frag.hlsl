@@ -9,7 +9,13 @@ cbuffer Uniforms : register(b0, space3) {
   float4 clip;    // the cup's opening in uv (center xy, radii zw): the rim hides what lies outside it
   float4 sun;     // rgb: sun color, a: the sun's elevation in radians
   float4 ambient; // rgb: ambient color, a: the elevation the eye looks down at the surface from
+  float4 look;    // x: 1 for flat colors and an ink line along the cup (the ink look)
 };
+
+static const float3 INK = float3(24.0, 20.0, 30.0) / 255.0;
+static const float3 FLAT_CREMA = float3(146.0, 92.0, 58.0) / 255.0;
+static const float3 FLAT_MIXED = float3(192.0, 136.0, 90.0) / 255.0;
+static const float3 FLAT_FOAM = float3(250.0, 244.0, 232.0) / 255.0;
 
 struct Input {
   float4 tex_color : COLOR0;
@@ -63,6 +69,14 @@ Output main(Input input) {
 
   float step_uv = 0.75 / size.x;
   float4 f = field(uv, size);
+
+  if (look.x > 0.5) {
+    float3 flat = saturate(f.g * 0.6 + params.y) > 0.45 ? FLAT_MIXED : FLAT_CREMA;
+    flat = f.r > 0.48 ? FLAT_FOAM : flat;
+    flat += FLAT_FOAM * step(0.48, f.r) * params.w;
+    output.frag_color = float4(r > 1.0 - fwidth(r) * 1.2 ? INK : flat, 1.0);
+    return output;
+  }
   float4 left = field(uv - float2(step_uv, 0.0), size);
   float4 right = field(uv + float2(step_uv, 0.0), size);
   float4 far = field(uv - float2(0.0, step_uv), size);

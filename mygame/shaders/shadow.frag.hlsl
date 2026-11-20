@@ -5,6 +5,7 @@ SamplerState coverage_sampler : register(s0, space2);
 
 cbuffer Uniforms : register(b0, space3) {
   float4 shadow; // rgb: what the shadow multiplies the lit color by, a: its strength
+  float4 shape;  // x: 1 for a hard edge
 };
 
 struct Input {
@@ -30,7 +31,7 @@ Output main(Input input) {
   float coverage = (coverage_at(uv) * 2.0 + coverage_at(uv + float2(step_uv.x, 0.0)) +
                     coverage_at(uv - float2(step_uv.x, 0.0)) + coverage_at(uv + float2(0.0, step_uv.y)) +
                     coverage_at(uv - float2(0.0, step_uv.y))) / 6.0;
-  float a = smoothstep(0.15, 0.4, coverage) * shadow.a;
+  float a = (shape.x > 0.5 ? step(0.3, coverage) : smoothstep(0.15, 0.4, coverage)) * shadow.a;
   output.frag_color = float4(shadow.rgb * a, a);
   return output;
 }
