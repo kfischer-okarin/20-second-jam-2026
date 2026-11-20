@@ -58,7 +58,7 @@ class Pitcher
 
   # The inside below the milk never shows
   def self.visible_surface?(x, y, z)
-    can(x, y, z).positive? || y - BOTTOM[1] > MILK_Y + 0.1
+    can(x, y, z).positive? || y - BOTTOM[1] > MILK_Y - 0.2
   end
 
   def initialize
